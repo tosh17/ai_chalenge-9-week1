@@ -5,15 +5,6 @@ const inputEl = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
 const stopBtn = document.getElementById("stopBtn");
 const clearBtn = document.getElementById("clearBtn");
-const settingsBtn = document.getElementById("settingsBtn");
-const settingsModal = document.getElementById("settingsModal");
-const saveSettingsBtn = document.getElementById("saveSettingsBtn");
-const personaGrid = document.getElementById("personaGrid");
-const customPersonaField = document.getElementById("customPersonaField");
-const customPersonaInput = document.getElementById("customPersonaInput");
-const maxTokensInput = document.getElementById("maxTokensInput");
-const maxWordsInput = document.getElementById("maxWordsInput");
-const personaBadge = document.getElementById("personaBadge");
 const layoutEl = document.getElementById("layout");
 const debugToggle = document.getElementById("debugToggle");
 const debugPanel = document.getElementById("debugPanel");
@@ -21,16 +12,6 @@ const debugLog = document.getElementById("debugLog");
 const clearDebugBtn = document.getElementById("clearDebugBtn");
 
 const DEBUG_STORAGE_KEY = "deepseek-chat-debug";
-const SETTINGS_STORAGE_KEY = "deepseek-chat-settings";
-
-const DEFAULT_PERSONAS = [
-  { id: "default", title: "Ассистент", description: "Краткий и деловой стиль" },
-  { id: "bender", title: "Бендер", description: "Робот из «Футурамы»" },
-  { id: "yoda", title: "Мастер Йода", description: "Мудрец из «Звёздных войн»" },
-  { id: "peasant", title: "Средневековый крестьянин", description: "Просторечье и суеверия" },
-  { id: "ravshan", title: "Равшан", description: "Персонаж «Наша Russia»" },
-  { id: "custom", title: "Свой персонаж", description: "Опишите роль сами" },
-];
 
 /** @type {{role: string, content: string}[]} */
 let history = [];
@@ -39,43 +20,6 @@ let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {AbortController | null} */
 let activeAbort = null;
-/** @type {{id: string, title: string, description: string}[]} */
-let personas = DEFAULT_PERSONAS;
-let draftPersona = "default";
-
-let settings = loadSettings();
-
-function loadSettings() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        persona: parsed.persona || "default",
-        customPersona: parsed.customPersona || "",
-        maxTokens: Number(parsed.maxTokens) || 300,
-        maxWords: Number(parsed.maxWords) || 120,
-      };
-    }
-  } catch {
-    /* ignore */
-  }
-  return { persona: "default", customPersona: "", maxTokens: 300, maxWords: 120 };
-}
-
-function saveSettings(next) {
-  settings = next;
-  localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-  updatePersonaBadge();
-}
-
-function personaTitle(id) {
-  return personas.find((p) => p.id === id)?.title || "Ассистент";
-}
-
-function updatePersonaBadge() {
-  personaBadge.textContent = personaTitle(settings.persona);
-}
 
 function hideWelcome() {
   if (welcomeEl) welcomeEl.style.display = "none";
@@ -101,10 +45,96 @@ function createMessage(role, content, extraClass = "") {
   return el;
 }
 
-function setBubbleText(messageEl, text) {
-  const bubble = messageEl.querySelector(".message__bubble");
-  if (bubble) bubble.textContent = text;
+function createCompareMessage() {
+  hideWelcome();
+
+  const el = document.createElement("div");
+  el.className = "message message--assistant message--compare";
+  el.innerHTML = `
+    <div class="message__avatar">AI</div>
+    <div class="compare">
+      <div class="compare__label">Сравнение техник · ответы появятся по мере готовности</div>
+      <div class="compare__grid"></div>
+    </div>
+  `;
+  chatEl.appendChild(el);
   scrollToBottom();
+  return el;
+}
+
+function ensureStrategyCard(compareEl, meta) {
+  const grid = compareEl.querySelector(".compare__grid");
+  let card = grid.querySelector(`[data-strategy="${meta.id}"]`);
+  if (card) return card;
+
+  card = document.createElement("article");
+  card.className = "strategy-card strategy-card--loading";
+  card.dataset.strategy = meta.id;
+  card.innerHTML = `
+    <button type="button" class="strategy-card__head" aria-expanded="false">
+      <span class="strategy-card__head-main">
+        <span class="strategy-card__title">${escapeHTML(meta.title)}</span>
+        <span class="strategy-card__desc">${escapeHTML(meta.description)}</span>
+      </span>
+      <span class="strategy-card__meta">
+        <span class="strategy-card__badge"><span class="strategy-card__spinner"></span>ждём</span>
+        <span class="strategy-card__chevron">▼</span>
+      </span>
+    </button>
+    <div class="strategy-card__body">
+      <p class="strategy-card__placeholder">Запрос выполняется…</p>
+    </div>
+  `;
+
+  card.querySelector(".strategy-card__head").addEventListener("click", () => {
+    const willOpen = !card.classList.contains("strategy-card--open");
+    grid.querySelectorAll(".strategy-card--open").forEach((other) => {
+      if (other !== card) {
+        other.classList.remove("strategy-card--open");
+        other.querySelector(".strategy-card__head")?.setAttribute("aria-expanded", "false");
+      }
+    });
+    card.classList.toggle("strategy-card--open", willOpen);
+    card.querySelector(".strategy-card__head").setAttribute("aria-expanded", willOpen ? "true" : "false");
+    scrollToBottom();
+  });
+
+  grid.appendChild(card);
+  scrollToBottom();
+  return card;
+}
+
+function fillStrategyCard(card, result, { autoOpen = false } = {}) {
+  const badge = card.querySelector(".strategy-card__badge");
+  const body = card.querySelector(".strategy-card__body");
+  const hasError = Boolean(result.error);
+
+  card.classList.remove("strategy-card--loading");
+  card.classList.toggle("strategy-card--error", hasError);
+  card.classList.toggle("strategy-card--ready", !hasError);
+
+  if (hasError) {
+    badge.textContent = "ошибка";
+    body.innerHTML = `<pre class="strategy-card__reply">${escapeHTML(result.error)}</pre>`;
+  } else {
+    const ms = result.duration_ms != null ? `${result.duration_ms} ms` : "";
+    badge.textContent = "готово";
+    let html = "";
+    if (result.generated_prompt) {
+      html += `
+        <div class="strategy-card__section-title">Сгенерированный промпт</div>
+        <pre class="strategy-card__prompt">${escapeHTML(result.generated_prompt)}</pre>
+        <div class="strategy-card__section-title">Ответ модели</div>
+      `;
+    }
+    html += `<pre class="strategy-card__reply">${escapeHTML(result.reply || "Пустой ответ.")}</pre>`;
+    if (ms) html += `<div class="strategy-card__duration">${escapeHTML(ms)}</div>`;
+    body.innerHTML = html;
+  }
+
+  if (autoOpen && !card.classList.contains("strategy-card--open")) {
+    card.querySelector(".strategy-card__head").click();
+  }
 }
 
 function setLoading(loading) {
@@ -175,28 +205,21 @@ function logExchange({ requestBody, status, responseBody, durationMs, upstream }
       <span class="debug-entry__status debug-entry__status--${status >= 200 && status < 300 ? "ok" : "err"}">${status}</span>
       <span class="debug-entry__duration">${durationMs} ms</span>
     </header>
-    ${appendDebugBlock("→ Запрос к /api/chat/stream", {
+    ${appendDebugBlock("→ Запрос к /api/chat/compare", {
       method: "POST",
-      url: "/api/chat/stream",
+      url: "/api/chat/compare",
       headers: { "Content-Type": "application/json", "X-Debug": debugEnabled ? "true" : undefined },
       body: requestBody,
     })}
-    ${appendDebugBlock("← Ответ stream", responseBody, status >= 400 ? "debug-block__code--error" : "")}
+    ${appendDebugBlock("← Ответ compare", responseBody, status >= 400 ? "debug-block__code--error" : "")}
     ${upstream ? appendDebugBlock("↔ DeepSeek API", upstream) : ""}
   `;
 
   debugLog.prepend(entry);
 }
 
-function buildRequestBody(text) {
-  return {
-    message: text,
-    history: history.slice(0, -1),
-    persona: settings.persona,
-    custom_persona: settings.customPersona,
-    max_tokens: settings.maxTokens,
-    max_words: settings.maxWords,
-  };
+function buildCompareBody(text) {
+  return { message: text };
 }
 
 async function consumeSSE(response, onEvent) {
@@ -237,13 +260,13 @@ async function sendMessage(text) {
   history.push({ role: "user", content: text });
 
   setLoading(true);
-  const assistantEl = createMessage("assistant", "", "message--streaming");
-  let fullText = "";
-  let finalDebug = null;
-  let streamError = null;
+  const compareEl = createCompareMessage();
+  const cards = new Map();
+  let finalResults = [];
+  let openedFirst = false;
   let aborted = false;
 
-  const requestBody = buildRequestBody(text);
+  const requestBody = buildCompareBody(text);
   const started = performance.now();
   activeAbort = new AbortController();
 
@@ -251,7 +274,7 @@ async function sendMessage(text) {
     const headers = { "Content-Type": "application/json" };
     if (debugEnabled) headers["X-Debug"] = "true";
 
-    const res = await fetch("/api/chat/stream", {
+    const res = await fetch("/api/chat/compare", {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
@@ -269,75 +292,73 @@ async function sendMessage(text) {
     }
 
     await consumeSSE(res, (event, payload) => {
-      if (event === "token" && payload?.delta) {
-        fullText += payload.delta;
-        // Не показываем stop-маркер в UI по мере стрима
-        setBubbleText(assistantEl, fullText.replaceAll("<<<END>>>", "").trimStart());
+      if (event === "card_start" && payload?.id) {
+        const card = ensureStrategyCard(compareEl, payload);
+        cards.set(payload.id, card);
+      } else if (event === "card_done" && payload?.id) {
+        let card = cards.get(payload.id);
+        if (!card) {
+          card = ensureStrategyCard(compareEl, payload);
+          cards.set(payload.id, card);
+        }
+        const autoOpen = !openedFirst && !payload.error;
+        if (autoOpen) openedFirst = true;
+        fillStrategyCard(card, payload, { autoOpen });
       } else if (event === "done") {
-        fullText = payload.reply || fullText;
-        finalDebug = payload.debug || null;
+        finalResults = payload.results || [];
       } else if (event === "aborted") {
         aborted = true;
-        fullText = payload.reply || fullText;
-      } else if (event === "error") {
-        streamError = payload.error || "Ошибка генерации";
-        finalDebug = payload.debug || null;
+        finalResults = payload.results || [];
       }
     });
 
     const durationMs = Math.round(performance.now() - started);
-    assistantEl.classList.remove("message--streaming");
-    const clean = fullText.replaceAll("<<<END>>>", "").trim();
+    const label = compareEl.querySelector(".compare__label");
+    if (label) {
+      label.textContent = aborted
+        ? "Сравнение прервано"
+        : `Сравнение техник · ${finalResults.filter((r) => !r.error).length}/${finalResults.length || cards.size} готово`;
+    }
 
     logExchange({
       requestBody,
-      status: streamError ? 502 : 200,
-      responseBody: streamError
-        ? { error: streamError, partial: clean }
-        : { reply: clean, aborted, streamed: true },
+      status: 200,
+      responseBody: { results: finalResults, aborted },
       durationMs,
-      upstream: finalDebug,
+      upstream: null,
     });
 
-    if (streamError) {
-      setBubbleText(assistantEl, streamError);
-      assistantEl.classList.add("message--error");
-      history.pop();
-      return;
-    }
-
-    if (!clean) {
-      setBubbleText(assistantEl, aborted ? "Генерация остановлена." : "Пустой ответ.");
-      if (!aborted) history.pop();
-      else history.push({ role: "assistant", content: "(остановлено)" });
-      return;
-    }
-
-    setBubbleText(assistantEl, clean + (aborted ? "\n\n[остановлено]" : ""));
-    history.push({ role: "assistant", content: clean });
+    const summary = finalResults
+      .map((r) => `${r.title}: ${r.error ? "ошибка" : "ok"}`)
+      .join("; ");
+    history.push({ role: "assistant", content: summary || "(сравнение стратегий)" });
   } catch (err) {
-    assistantEl.classList.remove("message--streaming");
     const durationMs = Math.round(performance.now() - started);
     const isAbort = err?.name === "AbortError";
+    const label = compareEl.querySelector(".compare__label");
 
     if (isAbort) {
-      const clean = fullText.replaceAll("<<<END>>>", "").trim();
-      setBubbleText(assistantEl, clean ? clean + "\n\n[остановлено]" : "Генерация остановлена.");
-      if (clean) history.push({ role: "assistant", content: clean });
-      else history.pop();
-
+      if (label) label.textContent = "Сравнение прервано";
+      compareEl.querySelectorAll(".strategy-card--loading").forEach((card) => {
+        fillStrategyCard(card, { error: "Остановлено пользователем" });
+      });
+      history.push({ role: "assistant", content: "(сравнение остановлено)" });
       logExchange({
         requestBody,
         status: 499,
-        responseBody: { aborted: true, reply: clean },
+        responseBody: { aborted: true },
         durationMs,
         upstream: null,
       });
     } else {
-      setBubbleText(assistantEl, err.message || "Не удалось связаться с сервером.");
-      assistantEl.classList.add("message--error");
+      if (label) label.textContent = "Ошибка сравнения";
+      const grid = compareEl.querySelector(".compare__grid");
+      grid.innerHTML = `<article class="strategy-card strategy-card--error strategy-card--open">
+        <div class="strategy-card__body" style="display:block;border:none;padding:14px">
+          <pre class="strategy-card__reply">${escapeHTML(err.message || "Не удалось связаться с сервером.")}</pre>
+        </div>
+      </article>`;
       history.pop();
-
       logExchange({
         requestBody,
         status: 0,
@@ -351,53 +372,6 @@ async function sendMessage(text) {
     setLoading(false);
     inputEl.focus();
   }
-}
-
-function openSettings() {
-  draftPersona = settings.persona;
-  maxTokensInput.value = String(settings.maxTokens);
-  maxWordsInput.value = String(settings.maxWords);
-  customPersonaInput.value = settings.customPersona;
-  renderPersonaCards();
-  settingsModal.hidden = false;
-}
-
-function closeSettings() {
-  settingsModal.hidden = true;
-}
-
-function renderPersonaCards() {
-  personaGrid.innerHTML = "";
-  for (const p of personas) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `persona-card${draftPersona === p.id ? " persona-card--active" : ""}`;
-    btn.innerHTML = `
-      <span class="persona-card__title">${escapeHTML(p.title)}</span>
-      <span class="persona-card__desc">${escapeHTML(p.description)}</span>
-    `;
-    btn.addEventListener("click", () => {
-      draftPersona = p.id;
-      customPersonaField.hidden = draftPersona !== "custom";
-      renderPersonaCards();
-    });
-    personaGrid.appendChild(btn);
-  }
-  customPersonaField.hidden = draftPersona !== "custom";
-}
-
-async function loadPersonas() {
-  try {
-    const res = await fetch("/api/personas");
-    if (!res.ok) return;
-    const data = await res.json();
-    if (Array.isArray(data.personas) && data.personas.length) {
-      personas = data.personas;
-    }
-  } catch {
-    /* fallback to defaults */
-  }
-  updatePersonaBadge();
 }
 
 formEl.addEventListener("submit", (e) => {
@@ -434,25 +408,6 @@ clearBtn.addEventListener("click", () => {
   inputEl.focus();
 });
 
-settingsBtn.addEventListener("click", openSettings);
-saveSettingsBtn.addEventListener("click", () => {
-  saveSettings({
-    persona: draftPersona,
-    customPersona: customPersonaInput.value.trim(),
-    maxTokens: Math.max(32, Number(maxTokensInput.value) || 300),
-    maxWords: Math.max(20, Number(maxWordsInput.value) || 120),
-  });
-  closeSettings();
-});
-
-settingsModal.querySelectorAll("[data-close-settings]").forEach((el) => {
-  el.addEventListener("click", closeSettings);
-});
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !settingsModal.hidden) closeSettings();
-});
-
 debugToggle.addEventListener("change", () => {
   setDebugMode(debugToggle.checked);
 });
@@ -460,6 +415,4 @@ debugToggle.addEventListener("change", () => {
 clearDebugBtn.addEventListener("click", clearDebugLog);
 
 setDebugMode(debugEnabled);
-updatePersonaBadge();
-loadPersonas();
 inputEl.focus();

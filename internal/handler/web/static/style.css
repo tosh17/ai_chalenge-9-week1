@@ -238,6 +238,218 @@ body {
   border-bottom-left-radius: 4px;
 }
 
+.message--compare {
+  align-items: flex-start;
+}
+
+.message--compare .message__avatar {
+  margin-top: 4px;
+}
+
+.compare {
+  flex: 1;
+  min-width: 0;
+  max-width: min(920px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compare__label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.compare__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.strategy-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--assistant-bg);
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.strategy-card--open {
+  border-color: rgba(79, 140, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.15);
+}
+
+.strategy-card--error {
+  border-color: rgba(255, 107, 107, 0.4);
+}
+
+.strategy-card--ready:not(.strategy-card--error) {
+  border-color: rgba(72, 199, 142, 0.35);
+}
+
+.strategy-card__head {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.strategy-card__head:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.strategy-card__head-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.strategy-card__title {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.strategy-card__desc {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.strategy-card__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.strategy-card__badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.strategy-card--loading .strategy-card__badge {
+  color: #8eb8ff;
+  border-color: rgba(79, 140, 255, 0.35);
+  background: rgba(79, 140, 255, 0.12);
+}
+
+.strategy-card--ready .strategy-card__badge {
+  color: #48c78e;
+  border-color: rgba(72, 199, 142, 0.35);
+  background: rgba(72, 199, 142, 0.12);
+}
+
+.strategy-card--error .strategy-card__badge {
+  color: var(--error);
+  border-color: rgba(255, 107, 107, 0.35);
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.strategy-card__chevron {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  transition: transform 0.15s;
+  line-height: 1.6;
+}
+
+.strategy-card--open .strategy-card__chevron {
+  transform: rotate(180deg);
+}
+
+.strategy-card__body {
+  display: none;
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.strategy-card--open .strategy-card__body {
+  display: block;
+  padding-top: 12px;
+}
+
+.strategy-card__prompt,
+.strategy-card__reply {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: #0c0e14;
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  max-height: 360px;
+  overflow: auto;
+  font-family: inherit;
+  color: var(--text);
+}
+
+.strategy-card__prompt {
+  margin-bottom: 10px;
+  color: #c4b5fd;
+  font-size: 0.8rem;
+}
+
+.strategy-card__section-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.strategy-card__duration {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.strategy-card__placeholder {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 8px 0;
+}
+
+.strategy-card__spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(79, 140, 255, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 720px) {
+  .compare__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .message--error .message__bubble {
   background: rgba(255, 107, 107, 0.12);
   border: 1px solid rgba(255, 107, 107, 0.35);

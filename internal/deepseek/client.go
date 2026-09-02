@@ -30,7 +30,6 @@ type chatRequest struct {
 	Messages  []Message `json:"messages"`
 	Stream    bool      `json:"stream"`
 	MaxTokens int       `json:"max_tokens,omitempty"`
-	Stop      []string  `json:"stop,omitempty"`
 }
 
 type chatResponse struct {
@@ -71,9 +70,6 @@ type ChatResult struct {
 type StreamHandler func(delta string) error
 
 func NewClient(apiKey, model, baseURL string, maxTokens int) *Client {
-	if maxTokens <= 0 {
-		maxTokens = 300
-	}
 	return &Client{
 		apiKey:        apiKey,
 		model:         model,
@@ -95,11 +91,79 @@ func (c *Client) resolveTokens(opts ChatOptions) int {
 func (c *Client) buildPayload(messages []Message, opts ChatOptions, stream bool) chatRequest {
 	return chatRequest{
 		Model:     c.model,
-		Messages:  withSystemPrompt(messages, opts),
+		Messages:  filterSystem(messages),
 		Stream:    stream,
 		MaxTokens: c.resolveTokens(opts),
-		Stop:      []string{StopMarker},
 	}
+}
+
+func (c *Client) buildRawPayload(messages []Message, maxTokens int, stream bool) chatRequest {
+	if maxTokens <= 0 {
+		maxTokens = c.defaultTokens
+	}
+	return chatRequest{
+		Model:     c.model,
+		Messages:  messages,
+		Stream:    stream,
+		MaxTokens: maxTokens,
+	}
+}
+
+// ChatRaw отправляет messages как есть, без persona/system-обёртки (для day3-стратегий).
+func (c *Client) ChatRaw(ctx context.Context, messages []Message, maxTokens int) (ChatResult, error) {
+	start := time.Now()
+	payload := c.buildRawPayload(messages, maxTokens, false)
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ChatResult{}, fmt.Errorf("marshal request: %w", err)
+	}
+
+	debug := DebugInfo{
+		URL:     c.baseURL,
+		Request: json.RawMessage(body),
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
+	if err != nil {
+		return ChatResult{}, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return ChatResult{Debug: debug}, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	debug.StatusCode = resp.StatusCode
+	debug.DurationMs = time.Since(start).Milliseconds()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ChatResult{Debug: debug}, fmt.Errorf("read response: %w", err)
+	}
+	debug.Response = json.RawMessage(respBody)
+
+	var result chatResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return ChatResult{Debug: debug}, fmt.Errorf("decode response: %w", err)
+	}
+	if result.Error != nil {
+		return ChatResult{Debug: debug}, fmt.Errorf("deepseek api error: %s", result.Error.Message)
+	}
+	if resp.StatusCode >= 400 {
+		return ChatResult{Debug: debug}, fmt.Errorf("deepseek api returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+	if len(result.Choices) == 0 {
+		return ChatResult{Debug: debug}, fmt.Errorf("empty response from deepseek")
+	}
+
+	return ChatResult{
+		Reply: cleanReply(result.Choices[0].Message.Content),
+		Debug: debug,
+	}, nil
 }
 
 func (c *Client) Chat(ctx context.Context, messages []Message, opts ChatOptions) (ChatResult, error) {
@@ -254,9 +318,8 @@ func (c *Client) ChatStream(ctx context.Context, messages []Message, opts ChatOp
 	return ChatResult{Reply: reply, Debug: debug}, nil
 }
 
-func withSystemPrompt(messages []Message, opts ChatOptions) []Message {
-	out := make([]Message, 0, len(messages)+1)
-	out = append(out, Message{Role: "system", Content: BuildSystemPrompt(opts)})
+func filterSystem(messages []Message) []Message {
+	out := make([]Message, 0, len(messages))
 	for _, m := range messages {
 		if m.Role == "system" {
 			continue
@@ -267,6 +330,5 @@ func withSystemPrompt(messages []Message, opts ChatOptions) []Message {
 }
 
 func cleanReply(reply string) string {
-	reply = strings.ReplaceAll(reply, StopMarker, "")
 	return strings.TrimSpace(reply)
 }

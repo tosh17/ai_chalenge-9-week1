@@ -60,6 +60,17 @@ curl -X POST http://localhost:8080/api/chat \
   }'
 ```
 
+### `POST /api/chat/compare`
+
+Четыре техники промптинга параллельно (SSE: `card_start` / `card_done` / `done`):
+прямой ответ, «решай пошагово», мета-промпт, группа экспертов.
+
+```bash
+curl -N -X POST http://localhost:8080/api/chat/compare \
+  -H "Content-Type: application/json" \
+  -d '{"message": "У фермера 17 овец. Все кроме 9 умерли. Сколько осталось?"}'
+```
+
 ## Переменные окружения
 
 | Переменная         | По умолчанию                                  | Описание              |
@@ -67,6 +78,7 @@ curl -X POST http://localhost:8080/api/chat \
 | `DEEPSEEK_API_KEY` | —                                             | API-ключ (обязательно)|
 | `DEEPSEEK_MODEL`   | `deepseek-v4-flash`                           | Модель DeepSeek       |
 | `DEEPSEEK_API_URL` | `https://api.deepseek.com/chat/completions`   | URL API               |
+| `DEEPSEEK_MAX_TOKENS` | `0` (без лимита)                           | max_tokens для API    |
 | `PORT`             | `8080`                                        | Порт сервера          |
 
 ## Структура проекта

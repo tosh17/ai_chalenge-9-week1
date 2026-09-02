@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 )
@@ -18,12 +19,9 @@ func New(client *deepseek.Client, model string) *Handler {
 }
 
 type chatRequestBody struct {
-	Message       string             `json:"message"`
-	History       []deepseek.Message `json:"history,omitempty"`
-	Persona       string             `json:"persona,omitempty"`
-	CustomPersona string             `json:"custom_persona,omitempty"`
-	MaxTokens     int                `json:"max_tokens,omitempty"`
-	MaxWords      int                `json:"max_words,omitempty"`
+	Message   string             `json:"message"`
+	History   []deepseek.Message `json:"history,omitempty"`
+	MaxTokens int                `json:"max_tokens,omitempty"`
 }
 
 type chatResponseBody struct {
@@ -39,16 +37,9 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (h *Handler) Personas(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"personas": deepseek.Personas()})
-}
-
 func (req chatRequestBody) options() deepseek.ChatOptions {
 	return deepseek.ChatOptions{
-		Persona:       req.Persona,
-		CustomPersona: req.CustomPersona,
-		MaxTokens:     req.MaxTokens,
-		MaxWords:      req.MaxWords,
+		MaxTokens: req.MaxTokens,
 	}
 }
 
@@ -95,6 +86,66 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		body.Debug = &reply.Debug
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+type compareRequestBody struct {
+	Message   string `json:"message"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
+}
+
+// Compare запускает 4 техники промптинга и стримит карточки по SSE:
+// event: card_start / card_done / done / error.
+func (h *Handler) Compare(w http.ResponseWriter, r *http.Request) {
+	var req compareRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "invalid json body"})
+		return
+	}
+	if req.Message == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "message is required"})
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, errorResponseBody{Error: "streaming unsupported"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	var writeMu sync.Mutex
+	writeSSE := func(event string, payload any) {
+		data, _ := json.Marshal(payload)
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+		flusher.Flush()
+	}
+
+	for _, meta := range deepseek.Strategies() {
+		writeSSE("card_start", meta)
+	}
+
+	maxTokens := req.MaxTokens
+
+	results := h.client.Compare(r.Context(), req.Message, deepseek.CompareOptions{
+		MaxTokens: maxTokens,
+	}, func(result deepseek.StrategyResult) {
+		writeSSE("card_done", result)
+	})
+
+	if r.Context().Err() != nil {
+		writeSSE("aborted", map[string]any{"results": results})
+		return
+	}
+
+	writeSSE("done", map[string]any{"results": results})
 }
 
 // ChatStream отдаёт SSE: event token / done / error.
