@@ -16,6 +16,7 @@
             <h1 class="header__title">DeepSeek Chat</h1>
             <p class="header__subtitle">
               Модель: <span class="header__model" title="Текущая модель DeepSeek">{{.Model}}</span>
+              · <span id="personaBadge" class="header__persona">Ассистент</span>
             </p>
           </div>
         </div>
@@ -25,6 +26,9 @@
             <span class="debug-toggle__track"></span>
             <span>Отладка</span>
           </label>
+          <button type="button" id="settingsBtn" class="btn btn--ghost" title="Настройки">
+            Настройки
+          </button>
           <button type="button" id="clearBtn" class="btn btn--ghost" title="Очистить диалог">
             Очистить
           </button>
@@ -35,7 +39,7 @@
         <div class="welcome" id="welcome">
           <div class="welcome__icon">💬</div>
           <h2>Начните диалог</h2>
-          <p>Задайте вопрос — ответ придёт от DeepSeek через ваш локальный сервис.</p>
+          <p>Выберите персонажа в настройках — стиль ответа изменится. Ответ идёт потоком, его можно остановить.</p>
         </div>
       </main>
 
@@ -48,13 +52,16 @@
             rows="1"
             autofocus
           ></textarea>
+          <button type="button" id="stopBtn" class="btn btn--stop" aria-label="Остановить" hidden>
+            Стоп
+          </button>
           <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
             </svg>
           </button>
         </form>
-        <p class="composer__hint">Enter — отправить · Shift+Enter — новая строка</p>
+        <p class="composer__hint">Enter — отправить · Shift+Enter — новая строка · Стоп — прервать генерацию</p>
       </footer>
     </div>
 
@@ -67,6 +74,46 @@
         <p class="debug-panel__empty">Запросы и ответы появятся здесь после отправки сообщения.</p>
       </div>
     </aside>
+  </div>
+
+  <div class="modal" id="settingsModal" hidden>
+    <div class="modal__backdrop" data-close-settings></div>
+    <div class="modal__dialog" role="dialog" aria-labelledby="settingsTitle" aria-modal="true">
+      <header class="modal__header">
+        <h2 id="settingsTitle">Настройки</h2>
+        <button type="button" class="btn btn--ghost btn--sm" data-close-settings aria-label="Закрыть">✕</button>
+      </header>
+      <div class="modal__body">
+        <section class="settings-section">
+          <h3 class="settings-section__title">Персонаж (system prompt)</h3>
+          <p class="settings-section__hint">От выбранной роли зависит стиль и тип ответа.</p>
+          <div class="persona-grid" id="personaGrid"></div>
+          <label class="field" id="customPersonaField" hidden>
+            <span class="field__label">Описание своего персонажа</span>
+            <textarea id="customPersonaInput" class="field__input" rows="3" placeholder="Например: уставший пират, который отвечает только рифмой…"></textarea>
+          </label>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section__title">Ограничения ответа</h3>
+          <div class="fields-row">
+            <label class="field">
+              <span class="field__label">Макс. токенов (API)</span>
+              <input type="number" id="maxTokensInput" class="field__input" min="32" max="4096" step="1" value="300">
+            </label>
+            <label class="field">
+              <span class="field__label">Макс. слов (в промпте)</span>
+              <input type="number" id="maxWordsInput" class="field__input" min="20" max="1000" step="10" value="120">
+            </label>
+          </div>
+          <p class="settings-section__hint">Токены — жёсткий лимит API. Слова — инструкция модели в system prompt. Stop sequence: <code>&lt;&lt;&lt;END&gt;&gt;&gt;</code></p>
+        </section>
+      </div>
+      <footer class="modal__footer">
+        <button type="button" class="btn btn--ghost" data-close-settings>Отмена</button>
+        <button type="button" id="saveSettingsBtn" class="btn btn--accent">Сохранить</button>
+      </footer>
+    </div>
   </div>
 
   <script src="/static/chat.js"></script>

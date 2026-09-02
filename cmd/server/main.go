@@ -15,14 +15,14 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	client := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
+	client := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL, cfg.MaxTokens)
 	h := handler.New(client, cfg.DeepSeekModel)
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
 	addr := ":" + cfg.Port
-	log.Printf("server listening on %s (model: %s)", addr, cfg.DeepSeekModel)
+	log.Printf("server listening on %s (model: %s, max_tokens: %d)", addr, cfg.DeepSeekModel, cfg.MaxTokens)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}
