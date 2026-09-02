@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek Chat</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="layout" id="layout">
+    <div class="app">
+      <header class="header">
+        <div class="header__brand">
+          <div class="header__logo">DS</div>
+          <div>
+            <h1 class="header__title">DeepSeek Chat</h1>
+            <p class="header__subtitle">
+              Модель: <span class="header__model" title="Текущая модель DeepSeek">{{.Model}}</span>
+            </p>
+          </div>
+        </div>
+        <div class="header__actions">
+          <label class="debug-toggle" title="Показать панель отладки">
+            <input type="checkbox" id="debugToggle">
+            <span class="debug-toggle__track"></span>
+            <span>Отладка</span>
+          </label>
+          <button type="button" id="clearBtn" class="btn btn--ghost" title="Очистить диалог">
+            Очистить
+          </button>
+        </div>
+      </header>
+
+      <main class="chat" id="chat">
+        <div class="welcome" id="welcome">
+          <div class="welcome__icon">💬</div>
+          <h2>Начните диалог</h2>
+          <p>Задайте вопрос — ответ придёт от DeepSeek через ваш локальный сервис.</p>
+        </div>
+      </main>
+
+      <footer class="composer">
+        <form id="chatForm" class="composer__form">
+          <textarea
+            id="messageInput"
+            class="composer__input"
+            placeholder="Напишите сообщение…"
+            rows="1"
+            autofocus
+          ></textarea>
+          <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+            </svg>
+          </button>
+        </form>
+        <p class="composer__hint">Enter — отправить · Shift+Enter — новая строка</p>
+      </footer>
+    </div>
+
+    <aside class="debug-panel" id="debugPanel" aria-hidden="true">
+      <div class="debug-panel__header">
+        <h2 class="debug-panel__title">Отладка</h2>
+        <button type="button" id="clearDebugBtn" class="btn btn--ghost btn--sm">Очистить лог</button>
+      </div>
+      <div class="debug-panel__body" id="debugLog">
+        <p class="debug-panel__empty">Запросы и ответы появятся здесь после отправки сообщения.</p>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/static/chat.js"></script>
+</body>
+</html>
