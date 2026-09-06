@@ -18,7 +18,7 @@ func Load() (*Config, error) {
 		Port:          getEnv("PORT", "8080"),
 		DeepSeekModel: getEnv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
 		DeepSeekURL:   getEnv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions"),
-		MaxTokens:     getEnvInt("DEEPSEEK_MAX_TOKENS", 300),
+		MaxTokens:     getEnvInt("DEEPSEEK_MAX_TOKENS", 4096),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")

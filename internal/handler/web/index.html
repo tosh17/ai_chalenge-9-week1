@@ -16,7 +16,7 @@
             <h1 class="header__title">DeepSeek Chat</h1>
             <p class="header__subtitle">
               Модель: <span class="header__model" title="Текущая модель DeepSeek">{{.Model}}</span>
-              · <span id="personaBadge" class="header__persona">Ассистент</span>
+              · temp <span id="tempBadge" class="header__persona">1.0</span>
             </p>
           </div>
         </div>
@@ -25,6 +25,11 @@
             <input type="checkbox" id="debugToggle">
             <span class="debug-toggle__track"></span>
             <span>Отладка</span>
+          </label>
+          <label class="debug-toggle" title="Прогнать вопрос на temp 0.1 / 1.0 / 1.9 и сравнить">
+            <input type="checkbox" id="compareToggle">
+            <span class="debug-toggle__track"></span>
+            <span>Сравнение</span>
           </label>
           <button type="button" id="settingsBtn" class="btn btn--ghost" title="Настройки">
             Настройки
@@ -39,7 +44,7 @@
         <div class="welcome" id="welcome">
           <div class="welcome__icon">💬</div>
           <h2>Начните диалог</h2>
-          <p>Выберите персонажа в настройках — стиль ответа изменится. Ответ идёт потоком, его можно остановить.</p>
+          <p>Двигайте температуру в настройках или включите «Сравнение» — вопрос прогонится на 0.1, 1.0 и 1.9, затем модель сравнит ответы.</p>
         </div>
       </main>
 
@@ -61,7 +66,7 @@
             </svg>
           </button>
         </form>
-        <p class="composer__hint">Enter — отправить · Shift+Enter — новая строка · Стоп — прервать генерацию</p>
+        <p class="composer__hint" id="composerHint">Enter — отправить · Shift+Enter — новая строка · Стоп — прервать генерацию</p>
       </footer>
     </div>
 
@@ -85,28 +90,35 @@
       </header>
       <div class="modal__body">
         <section class="settings-section">
-          <h3 class="settings-section__title">Персонаж (system prompt)</h3>
-          <p class="settings-section__hint">От выбранной роли зависит стиль и тип ответа.</p>
-          <div class="persona-grid" id="personaGrid"></div>
-          <label class="field" id="customPersonaField" hidden>
-            <span class="field__label">Описание своего персонажа</span>
-            <textarea id="customPersonaInput" class="field__input" rows="3" placeholder="Например: уставший пират, который отвечает только рифмой…"></textarea>
-          </label>
-        </section>
-
-        <section class="settings-section">
-          <h3 class="settings-section__title">Ограничения ответа</h3>
-          <div class="fields-row">
-            <label class="field">
-              <span class="field__label">Макс. токенов (API)</span>
-              <input type="number" id="maxTokensInput" class="field__input" min="32" max="4096" step="1" value="300">
-            </label>
-            <label class="field">
-              <span class="field__label">Макс. слов (в промпте)</span>
-              <input type="number" id="maxWordsInput" class="field__input" min="20" max="1000" step="10" value="120">
-            </label>
+          <h3 class="settings-section__title">Температура</h3>
+          <p class="settings-section__hint">
+            Низкая — более точные и предсказуемые ответы. Высокая — больше разнообразия и креатива.
+          </p>
+          <div class="temp-control">
+            <div class="temp-control__labels">
+              <span>Точность</span>
+              <span id="tempValue" class="temp-control__value">1.0</span>
+              <span>Креатив</span>
+            </div>
+            <input
+              type="range"
+              id="temperatureInput"
+              class="temp-slider"
+              min="0"
+              max="2"
+              step="0.1"
+              value="1"
+              aria-valuemin="0"
+              aria-valuemax="2"
+              aria-valuenow="1"
+              aria-label="Температура"
+            >
+            <div class="temp-control__scale">
+              <span>0</span>
+              <span>1</span>
+              <span>2</span>
+            </div>
           </div>
-          <p class="settings-section__hint">Токены — жёсткий лимит API. Слова — инструкция модели в system prompt. Stop sequence: <code>&lt;&lt;&lt;END&gt;&gt;&gt;</code></p>
         </section>
       </div>
       <footer class="modal__footer">

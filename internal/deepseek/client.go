@@ -26,11 +26,12 @@ type Message struct {
 }
 
 type chatRequest struct {
-	Model     string    `json:"model"`
-	Messages  []Message `json:"messages"`
-	Stream    bool      `json:"stream"`
-	MaxTokens int       `json:"max_tokens,omitempty"`
-	Stop      []string  `json:"stop,omitempty"`
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	Stream      bool      `json:"stream"`
+	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Temperature *float64  `json:"temperature,omitempty"`
+	Stop        []string  `json:"stop,omitempty"`
 }
 
 type chatResponse struct {
@@ -72,7 +73,7 @@ type StreamHandler func(delta string) error
 
 func NewClient(apiKey, model, baseURL string, maxTokens int) *Client {
 	if maxTokens <= 0 {
-		maxTokens = 300
+		maxTokens = 4096
 	}
 	return &Client{
 		apiKey:        apiKey,
@@ -94,11 +95,11 @@ func (c *Client) resolveTokens(opts ChatOptions) int {
 
 func (c *Client) buildPayload(messages []Message, opts ChatOptions, stream bool) chatRequest {
 	return chatRequest{
-		Model:     c.model,
-		Messages:  withSystemPrompt(messages, opts),
-		Stream:    stream,
-		MaxTokens: c.resolveTokens(opts),
-		Stop:      []string{StopMarker},
+		Model:       c.model,
+		Messages:    withSystemPrompt(messages, opts),
+		Stream:      stream,
+		MaxTokens:   c.resolveTokens(opts),
+		Temperature: opts.Temperature,
 	}
 }
 

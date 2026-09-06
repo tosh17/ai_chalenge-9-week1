@@ -10,6 +10,7 @@ type ChatOptions struct {
 	CustomPersona string
 	MaxTokens     int
 	MaxWords      int
+	Temperature   *float64 // 0–2; nil → API default
 }
 
 type Persona struct {
@@ -30,26 +31,7 @@ func Personas() []Persona {
 }
 
 func BuildSystemPrompt(opts ChatOptions) string {
-	maxWords := opts.MaxWords
-	if maxWords <= 0 {
-		maxWords = 120
-	}
-
-	format := fmt.Sprintf(`Общие правила ответа:
-1. Первая строка — краткий итог (одно предложение).
-2. Далее при необходимости — маркированный список из 1–5 пунктов.
-3. Не используй вступление вроде «Конечно!» или «Вот ответ:», если это не часть роли.
-4. Не используй markdown-заголовки (#), если пользователь об этом не просил.
-
-Ограничение длины:
-- Не больше %d слов.
-- Не больше 5 коротких абзацев или пунктов.
-
-Условие завершения:
-- Когда ответ полностью готов, закончи его маркером %s на отдельной строке.
-- После маркера ничего не пиши.`, maxWords, StopMarker)
-
-	return personaInstruction(opts) + "\n\n" + format
+	return personaInstruction(opts)
 }
 
 func personaInstruction(opts ChatOptions) string {

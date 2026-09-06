@@ -24,6 +24,7 @@ type chatRequestBody struct {
 	CustomPersona string             `json:"custom_persona,omitempty"`
 	MaxTokens     int                `json:"max_tokens,omitempty"`
 	MaxWords      int                `json:"max_words,omitempty"`
+	Temperature   *float64           `json:"temperature,omitempty"`
 }
 
 type chatResponseBody struct {
@@ -49,7 +50,22 @@ func (req chatRequestBody) options() deepseek.ChatOptions {
 		CustomPersona: req.CustomPersona,
 		MaxTokens:     req.MaxTokens,
 		MaxWords:      req.MaxWords,
+		Temperature:   clampTemperature(req.Temperature),
 	}
+}
+
+func clampTemperature(t *float64) *float64 {
+	if t == nil {
+		return nil
+	}
+	v := *t
+	if v < 0 {
+		v = 0
+	}
+	if v > 2 {
+		v = 2
+	}
+	return &v
 }
 
 func (req chatRequestBody) messages() ([]deepseek.Message, error) {

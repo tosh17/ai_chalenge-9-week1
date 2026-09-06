@@ -8,12 +8,11 @@ const clearBtn = document.getElementById("clearBtn");
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
-const personaGrid = document.getElementById("personaGrid");
-const customPersonaField = document.getElementById("customPersonaField");
-const customPersonaInput = document.getElementById("customPersonaInput");
-const maxTokensInput = document.getElementById("maxTokensInput");
-const maxWordsInput = document.getElementById("maxWordsInput");
-const personaBadge = document.getElementById("personaBadge");
+const temperatureInput = document.getElementById("temperatureInput");
+const tempValue = document.getElementById("tempValue");
+const tempBadge = document.getElementById("tempBadge");
+const compareToggle = document.getElementById("compareToggle");
+const composerHint = document.getElementById("composerHint");
 const layoutEl = document.getElementById("layout");
 const debugToggle = document.getElementById("debugToggle");
 const debugPanel = document.getElementById("debugPanel");
@@ -21,60 +20,71 @@ const debugLog = document.getElementById("debugLog");
 const clearDebugBtn = document.getElementById("clearDebugBtn");
 
 const DEBUG_STORAGE_KEY = "deepseek-chat-debug";
-const SETTINGS_STORAGE_KEY = "deepseek-chat-settings";
+const SETTINGS_STORAGE_KEY = "deepseek-chat-settings-day4";
+const COMPARE_STORAGE_KEY = "deepseek-chat-compare";
+const DEFAULT_TEMPERATURE = 1.0;
+const COMPARE_TEMPS = [0.1, 1.0, 1.9];
 
-const DEFAULT_PERSONAS = [
-  { id: "default", title: "Ассистент", description: "Краткий и деловой стиль" },
-  { id: "bender", title: "Бендер", description: "Робот из «Футурамы»" },
-  { id: "yoda", title: "Мастер Йода", description: "Мудрец из «Звёздных войн»" },
-  { id: "peasant", title: "Средневековый крестьянин", description: "Просторечье и суеверия" },
-  { id: "ravshan", title: "Равшан", description: "Персонаж «Наша Russia»" },
-  { id: "custom", title: "Свой персонаж", description: "Опишите роль сами" },
-];
+const HINT_NORMAL = "Enter — отправить · Shift+Enter — новая строка · Стоп — прервать генерацию";
+const HINT_COMPARE = "Режим сравнения: temp 0.1 → 1.0 → 1.9 → анализ · Стоп — прервать";
 
 /** @type {{role: string, content: string}[]} */
 let history = [];
 let isLoading = false;
 let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
+let compareEnabled = localStorage.getItem(COMPARE_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {AbortController | null} */
 let activeAbort = null;
-/** @type {{id: string, title: string, description: string}[]} */
-let personas = DEFAULT_PERSONAS;
-let draftPersona = "default";
 
 let settings = loadSettings();
+
+function clampTemperature(value) {
+  const n = Number(value);
+  if (Number.isNaN(n)) return DEFAULT_TEMPERATURE;
+  return Math.min(2, Math.max(0, Math.round(n * 10) / 10));
+}
+
+function formatTemp(value) {
+  return clampTemperature(value).toFixed(1);
+}
 
 function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      return {
-        persona: parsed.persona || "default",
-        customPersona: parsed.customPersona || "",
-        maxTokens: Number(parsed.maxTokens) || 300,
-        maxWords: Number(parsed.maxWords) || 120,
-      };
+      return { temperature: clampTemperature(parsed.temperature) };
     }
   } catch {
     /* ignore */
   }
-  return { persona: "default", customPersona: "", maxTokens: 300, maxWords: 120 };
+  return { temperature: DEFAULT_TEMPERATURE };
 }
 
 function saveSettings(next) {
   settings = next;
   localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-  updatePersonaBadge();
+  updateTempBadge();
 }
 
-function personaTitle(id) {
-  return personas.find((p) => p.id === id)?.title || "Ассистент";
+function updateTempBadge() {
+  tempBadge.textContent = compareEnabled ? "сравнение" : formatTemp(settings.temperature);
 }
 
-function updatePersonaBadge() {
-  personaBadge.textContent = personaTitle(settings.persona);
+function syncTempUI(value) {
+  const t = clampTemperature(value);
+  temperatureInput.value = String(t);
+  temperatureInput.setAttribute("aria-valuenow", String(t));
+  tempValue.textContent = formatTemp(t);
+}
+
+function setCompareMode(enabled) {
+  compareEnabled = enabled;
+  localStorage.setItem(COMPARE_STORAGE_KEY, enabled ? "true" : "false");
+  compareToggle.checked = enabled;
+  composerHint.textContent = enabled ? HINT_COMPARE : HINT_NORMAL;
+  updateTempBadge();
 }
 
 function hideWelcome() {
@@ -85,15 +95,23 @@ function scrollToBottom() {
   chatEl.scrollTop = chatEl.scrollHeight;
 }
 
-function createMessage(role, content, extraClass = "") {
+function createMessage(role, content, extraClass = "", label = null) {
   hideWelcome();
 
   const isUser = role === "user";
   const el = document.createElement("div");
   el.className = `message message--${role} ${extraClass}`.trim();
+
+  const labelHTML = label
+    ? `<span class="message__label${label.analysis ? " message__label--analysis" : ""}">${escapeHTML(label.text)}</span>`
+    : "";
+
   el.innerHTML = `
     <div class="message__avatar">${isUser ? "Вы" : "AI"}</div>
-    <div class="message__bubble"></div>
+    <div class="message__col">
+      ${labelHTML}
+      <div class="message__bubble"></div>
+    </div>
   `;
   el.querySelector(".message__bubble").textContent = content;
   chatEl.appendChild(el);
@@ -112,6 +130,7 @@ function setLoading(loading) {
   sendBtn.disabled = loading;
   inputEl.disabled = loading;
   stopBtn.hidden = !loading;
+  compareToggle.disabled = loading;
 }
 
 function autoResizeTextarea() {
@@ -158,7 +177,7 @@ function escapeHTML(text) {
   return div.innerHTML;
 }
 
-function logExchange({ requestBody, status, responseBody, durationMs, upstream }) {
+function logExchange({ requestBody, status, responseBody, durationMs, upstream, url = "/api/chat/stream" }) {
   if (!debugEnabled) return;
 
   if (debugEntryCount === 0) {
@@ -175,9 +194,9 @@ function logExchange({ requestBody, status, responseBody, durationMs, upstream }
       <span class="debug-entry__status debug-entry__status--${status >= 200 && status < 300 ? "ok" : "err"}">${status}</span>
       <span class="debug-entry__duration">${durationMs} ms</span>
     </header>
-    ${appendDebugBlock("→ Запрос к /api/chat/stream", {
+    ${appendDebugBlock(`→ Запрос к ${url}`, {
       method: "POST",
-      url: "/api/chat/stream",
+      url,
       headers: { "Content-Type": "application/json", "X-Debug": debugEnabled ? "true" : undefined },
       body: requestBody,
     })}
@@ -188,15 +207,37 @@ function logExchange({ requestBody, status, responseBody, durationMs, upstream }
   debugLog.prepend(entry);
 }
 
-function buildRequestBody(text) {
-  return {
+function buildRequestBody(text, temperature) {
+  const body = {
     message: text,
-    history: history.slice(0, -1),
-    persona: settings.persona,
-    custom_persona: settings.customPersona,
-    max_tokens: settings.maxTokens,
-    max_words: settings.maxWords,
+    history: [],
   };
+  if (temperature !== null && temperature !== undefined) {
+    body.temperature = temperature;
+  }
+  return body;
+}
+
+function buildAnalysisPrompt(question, replies) {
+  const blocks = replies
+    .map((r) => `### Ответ при temperature=${formatTemp(r.temperature)}\n${r.reply || "(пустой или ошибка)"}`)
+    .join("\n\n");
+
+  return `Сравни три ответа на один и тот же вопрос. Ответы получены при разной температуре генерации одной и той же модели.
+
+Вопрос пользователя:
+${question}
+
+${blocks}
+
+Сделай сравнительный анализ:
+1. Чем отличаются стиль, структура и тон.
+2. Где больше точности и предсказуемости, а где креатива и разнообразия.
+3. Есть ли фактические расхождения.
+4. В каких задачах уместнее каждая температура.
+5. Краткий итог — какая температура здесь сработала лучше и почему.
+
+Не пересказывай ответы целиком — сравнивай по существу.`;
 }
 
 async function consumeSSE(response, onEvent) {
@@ -232,7 +273,155 @@ async function consumeSSE(response, onEvent) {
   }
 }
 
-async function sendMessage(text) {
+/**
+ * @param {{message: string, temperature?: number|null, label?: {text: string, analysis?: boolean}}} opts
+ * @returns {Promise<{reply: string, aborted: boolean, error: string|null}>}
+ */
+async function streamOnce({ message, temperature = null, label = null }) {
+  const assistantEl = createMessage("assistant", "", "message--streaming", label);
+  let fullText = "";
+  let finalDebug = null;
+  let streamError = null;
+  let aborted = false;
+
+  const requestBody = buildRequestBody(message, temperature);
+  const started = performance.now();
+
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (debugEnabled) headers["X-Debug"] = "true";
+
+    const res = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(requestBody),
+      signal: activeAbort.signal,
+    });
+
+    if (!res.ok) {
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        /* ignore */
+      }
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+
+    await consumeSSE(res, (event, payload) => {
+      if (event === "token" && payload?.delta) {
+        fullText += payload.delta;
+        setBubbleText(assistantEl, fullText.replaceAll("<<<END>>>", "").trimStart());
+      } else if (event === "done") {
+        fullText = payload.reply || fullText;
+        finalDebug = payload.debug || null;
+      } else if (event === "aborted") {
+        aborted = true;
+        fullText = payload.reply || fullText;
+      } else if (event === "error") {
+        streamError = payload.error || "Ошибка генерации";
+        finalDebug = payload.debug || null;
+      }
+    });
+
+    const durationMs = Math.round(performance.now() - started);
+    assistantEl.classList.remove("message--streaming");
+    const clean = fullText.replaceAll("<<<END>>>", "").trim();
+
+    logExchange({
+      requestBody,
+      status: streamError ? 502 : 200,
+      responseBody: streamError
+        ? { error: streamError, partial: clean }
+        : { reply: clean, aborted, streamed: true },
+      durationMs,
+      upstream: finalDebug,
+    });
+
+    if (streamError) {
+      setBubbleText(assistantEl, streamError);
+      assistantEl.classList.add("message--error");
+      return { reply: "", aborted: false, error: streamError };
+    }
+
+    if (!clean) {
+      const emptyText = aborted ? "Генерация остановлена." : "Пустой ответ.";
+      setBubbleText(assistantEl, emptyText);
+      return { reply: "", aborted, error: aborted ? "aborted" : "empty" };
+    }
+
+    setBubbleText(assistantEl, clean + (aborted ? "\n\n[остановлено]" : ""));
+    return { reply: clean, aborted, error: null };
+  } catch (err) {
+    assistantEl.classList.remove("message--streaming");
+    const durationMs = Math.round(performance.now() - started);
+    const isAbort = err?.name === "AbortError";
+
+    if (isAbort) {
+      const clean = fullText.replaceAll("<<<END>>>", "").trim();
+      setBubbleText(assistantEl, clean ? clean + "\n\n[остановлено]" : "Генерация остановлена.");
+      logExchange({
+        requestBody,
+        status: 499,
+        responseBody: { aborted: true, reply: clean },
+        durationMs,
+        upstream: null,
+      });
+      return { reply: clean, aborted: true, error: "aborted" };
+    }
+
+    setBubbleText(assistantEl, err.message || "Не удалось связаться с сервером.");
+    assistantEl.classList.add("message--error");
+    logExchange({
+      requestBody,
+      status: 0,
+      responseBody: { error: String(err) },
+      durationMs,
+      upstream: null,
+    });
+    return { reply: "", aborted: false, error: err.message || String(err) };
+  }
+}
+
+async function sendCompare(text) {
+  createMessage("user", text);
+  setLoading(true);
+  activeAbort = new AbortController();
+
+  const replies = [];
+
+  try {
+    for (const temp of COMPARE_TEMPS) {
+      if (activeAbort.signal.aborted) break;
+
+      const result = await streamOnce({
+        message: text,
+        temperature: temp,
+        label: { text: `temperature ${formatTemp(temp)}` },
+      });
+
+      replies.push({ temperature: temp, reply: result.reply });
+
+      if (result.aborted || result.error === "aborted") {
+        return;
+      }
+    }
+
+    if (activeAbort.signal.aborted) return;
+
+    await streamOnce({
+      message: buildAnalysisPrompt(text, replies),
+      temperature: null,
+      label: { text: "Сравнительный анализ", analysis: true },
+    });
+  } finally {
+    activeAbort = null;
+    setLoading(false);
+    inputEl.focus();
+  }
+}
+
+async function sendNormal(text) {
   createMessage("user", text);
   history.push({ role: "user", content: text });
 
@@ -243,7 +432,11 @@ async function sendMessage(text) {
   let streamError = null;
   let aborted = false;
 
-  const requestBody = buildRequestBody(text);
+  const requestBody = {
+    message: text,
+    history: history.slice(0, -1),
+    temperature: settings.temperature,
+  };
   const started = performance.now();
   activeAbort = new AbortController();
 
@@ -271,7 +464,6 @@ async function sendMessage(text) {
     await consumeSSE(res, (event, payload) => {
       if (event === "token" && payload?.delta) {
         fullText += payload.delta;
-        // Не показываем stop-маркер в UI по мере стрима
         setBubbleText(assistantEl, fullText.replaceAll("<<<END>>>", "").trimStart());
       } else if (event === "done") {
         fullText = payload.reply || fullText;
@@ -353,51 +545,21 @@ async function sendMessage(text) {
   }
 }
 
+async function sendMessage(text) {
+  if (compareEnabled) {
+    await sendCompare(text);
+    return;
+  }
+  await sendNormal(text);
+}
+
 function openSettings() {
-  draftPersona = settings.persona;
-  maxTokensInput.value = String(settings.maxTokens);
-  maxWordsInput.value = String(settings.maxWords);
-  customPersonaInput.value = settings.customPersona;
-  renderPersonaCards();
+  syncTempUI(settings.temperature);
   settingsModal.hidden = false;
 }
 
 function closeSettings() {
   settingsModal.hidden = true;
-}
-
-function renderPersonaCards() {
-  personaGrid.innerHTML = "";
-  for (const p of personas) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `persona-card${draftPersona === p.id ? " persona-card--active" : ""}`;
-    btn.innerHTML = `
-      <span class="persona-card__title">${escapeHTML(p.title)}</span>
-      <span class="persona-card__desc">${escapeHTML(p.description)}</span>
-    `;
-    btn.addEventListener("click", () => {
-      draftPersona = p.id;
-      customPersonaField.hidden = draftPersona !== "custom";
-      renderPersonaCards();
-    });
-    personaGrid.appendChild(btn);
-  }
-  customPersonaField.hidden = draftPersona !== "custom";
-}
-
-async function loadPersonas() {
-  try {
-    const res = await fetch("/api/personas");
-    if (!res.ok) return;
-    const data = await res.json();
-    if (Array.isArray(data.personas) && data.personas.length) {
-      personas = data.personas;
-    }
-  } catch {
-    /* fallback to defaults */
-  }
-  updatePersonaBadge();
 }
 
 formEl.addEventListener("submit", (e) => {
@@ -437,12 +599,13 @@ clearBtn.addEventListener("click", () => {
 settingsBtn.addEventListener("click", openSettings);
 saveSettingsBtn.addEventListener("click", () => {
   saveSettings({
-    persona: draftPersona,
-    customPersona: customPersonaInput.value.trim(),
-    maxTokens: Math.max(32, Number(maxTokensInput.value) || 300),
-    maxWords: Math.max(20, Number(maxWordsInput.value) || 120),
+    temperature: clampTemperature(temperatureInput.value),
   });
   closeSettings();
+});
+
+temperatureInput.addEventListener("input", () => {
+  syncTempUI(temperatureInput.value);
 });
 
 settingsModal.querySelectorAll("[data-close-settings]").forEach((el) => {
@@ -457,9 +620,13 @@ debugToggle.addEventListener("change", () => {
   setDebugMode(debugToggle.checked);
 });
 
+compareToggle.addEventListener("change", () => {
+  setCompareMode(compareToggle.checked);
+});
+
 clearDebugBtn.addEventListener("click", clearDebugLog);
 
 setDebugMode(debugEnabled);
-updatePersonaBadge();
-loadPersonas();
+setCompareMode(compareEnabled);
+updateTempBadge();
 inputEl.focus();
