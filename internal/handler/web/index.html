@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DeepSeek Chat</title>
+  <title>DeepSeek · Сравнение моделей</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -13,9 +13,9 @@
         <div class="header__brand">
           <div class="header__logo">DS</div>
           <div>
-            <h1 class="header__title">DeepSeek Chat</h1>
+            <h1 class="header__title">Сравнение моделей</h1>
             <p class="header__subtitle">
-              Модель: <span class="header__model" title="Текущая модель DeepSeek">{{.Model}}</span>
+              Flash / Flash Think / Pro · токены, время, $/токен·с
             </p>
           </div>
         </div>
@@ -33,9 +33,15 @@
 
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
-          <div class="welcome__icon">💬</div>
-          <h2>Начните диалог</h2>
-          <p>Задайте вопрос — ответ придёт от DeepSeek через ваш локальный сервис.</p>
+          <div class="welcome__icon">⚡</div>
+          <h2>Бенчмарк моделей DeepSeek</h2>
+          <p>
+            Один вопрос уйдёт параллельно на три уровня:
+            <strong>Flash</strong> (слабая),
+            <strong>Flash + thinking</strong> (средняя),
+            <strong>Pro + thinking</strong> (сильная).
+            Сравним качество, скорость и стоимость.
+          </p>
         </div>
       </main>
 
@@ -44,17 +50,20 @@
           <textarea
             id="messageInput"
             class="composer__input"
-            placeholder="Напишите сообщение…"
+            placeholder="Задайте задачу для сравнения моделей…"
             rows="1"
             autofocus
           ></textarea>
+          <button type="button" id="stopBtn" class="btn btn--stop" aria-label="Остановить" hidden>
+            Стоп
+          </button>
           <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
             </svg>
           </button>
         </form>
-        <p class="composer__hint">Enter — отправить · Shift+Enter — новая строка</p>
+        <p class="composer__hint">Enter — сравнить · 3 запроса параллельно · Стоп — прервать</p>
       </footer>
     </div>
 
