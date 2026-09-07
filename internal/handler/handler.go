@@ -4,16 +4,17 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/tosh17/deepseek-service/internal/agent"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 )
 
 type Handler struct {
-	client *deepseek.Client
-	model  string
+	agent *agent.Agent
+	model string
 }
 
-func New(client *deepseek.Client, model string) *Handler {
-	return &Handler{client: client, model: model}
+func New(a *agent.Agent, model string) *Handler {
+	return &Handler{agent: a, model: model}
 }
 
 type chatRequestBody struct {
@@ -22,8 +23,10 @@ type chatRequestBody struct {
 }
 
 type chatResponseBody struct {
-	Reply string              `json:"reply"`
-	Debug *deepseek.DebugInfo `json:"debug,omitempty"`
+	Reply      string              `json:"reply"`
+	Agent      string              `json:"agent"`
+	DurationMs int64               `json:"duration_ms,omitempty"`
+	Debug      *deepseek.DebugInfo `json:"debug,omitempty"`
 }
 
 type errorResponseBody struct {
@@ -31,7 +34,10 @@ type errorResponseBody struct {
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ok",
+		"agent":  h.agent.Name(),
+	})
 }
 
 func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -41,34 +47,31 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Message == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "message is required"})
-		return
-	}
-
-	messages := append([]deepseek.Message{}, req.History...)
-	messages = append(messages, deepseek.Message{
-		Role:    "user",
-		Content: req.Message,
+	result, err := h.agent.Handle(r.Context(), agent.Request{
+		Message: req.Message,
+		History: req.History,
 	})
-
-	reply, err := h.client.Chat(r.Context(), messages)
 	if err != nil {
-		resp := errorResponseBody{Error: err.Error()}
 		if r.Header.Get("X-Debug") == "true" {
 			writeJSON(w, http.StatusBadGateway, map[string]any{
-				"error": err.Error(),
-				"debug": reply.Debug,
+				"error":       err.Error(),
+				"agent":       h.agent.Name(),
+				"duration_ms": result.DurationMs,
+				"debug":       result.Debug,
 			})
 			return
 		}
-		writeJSON(w, http.StatusBadGateway, resp)
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
 		return
 	}
 
-	body := chatResponseBody{Reply: reply.Reply}
+	body := chatResponseBody{
+		Reply:      result.Reply,
+		Agent:      h.agent.Name(),
+		DurationMs: result.DurationMs,
+	}
 	if r.Header.Get("X-Debug") == "true" {
-		body.Debug = &reply.Debug
+		body.Debug = result.Debug
 	}
 
 	writeJSON(w, http.StatusOK, body)

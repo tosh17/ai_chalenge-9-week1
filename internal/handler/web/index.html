@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DeepSeek Chat</title>
+  <title>Day6 · Chat Agent</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -13,9 +13,10 @@
         <div class="header__brand">
           <div class="header__logo">DS</div>
           <div>
-            <h1 class="header__title">DeepSeek Chat</h1>
+            <h1 class="header__title">Chat Agent</h1>
             <p class="header__subtitle">
-              Модель: <span class="header__model" title="Текущая модель DeepSeek">{{.Model}}</span>
+              Агент: <span class="header__model">day6-chat-agent</span>
+              · модель <span class="header__model" title="Модель LLM">{{.Model}}</span>
             </p>
           </div>
         </div>
@@ -34,8 +35,8 @@
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
           <div class="welcome__icon">💬</div>
-          <h2>Начните диалог</h2>
-          <p>Задайте вопрос — ответ придёт от DeepSeek через ваш локальный сервис.</p>
+          <h2>Простой агент</h2>
+          <p>Запрос уходит в отдельную сущность <code>Agent</code>, она вызывает LLM через API и возвращает ответ в чат.</p>
         </div>
       </main>
 

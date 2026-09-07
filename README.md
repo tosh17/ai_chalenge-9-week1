@@ -1,80 +1,54 @@
-# DeepSeek Web Service
+# Day 6 · Simple Chat Agent
 
-Веб-сервис на Go, который проксирует запросы к DeepSeek API.
+Веб-чат на Go, где **агент — отдельная сущность**: он принимает запрос пользователя,
+вызывает LLM через HTTP API и возвращает ответ в интерфейс.
 
-## Требования
+## Архитектура
 
-- Go 1.22+
-- API-ключ DeepSeek ([platform.deepseek.com](https://platform.deepseek.com))
+```
+UI / HTTP handler  →  agent.Agent.Handle()  →  deepseek.Client (LLM API)
+```
+
+- `internal/agent` — инкапсуляция логики запрос/ответ
+- `internal/deepseek` — HTTP-клиент к модели
+- `internal/handler` — только транспорт (web + JSON API)
 
 ## Быстрый старт
 
 ```bash
-# Скопируйте переменные окружения
 cp .env.example .env
-# Укажите DEEPSEEK_API_KEY в .env
+# укажите DEEPSEEK_API_KEY
 
 export $(grep -v '^#' .env | xargs)
-
-# Запуск
 go run ./cmd/server
 ```
 
-Откройте в браузере: **http://localhost:8080**
+Откройте: **http://localhost:8080**
 
 ## API
 
-### `GET /`
+### `POST /api/chat`
 
-Веб-интерфейс чата.
+```bash
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Привет! Кто ты?"}'
+```
+
+Ответ включает `reply`, `agent`, `duration_ms`.
 
 ### `GET /health`
-
-Проверка состояния сервиса.
 
 ```bash
 curl http://localhost:8080/health
 ```
 
-### `POST /api/chat`
-
-Отправка сообщения в DeepSeek.
-
-```bash
-curl -X POST http://localhost:8080/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Привет! Расскажи про Go."}'
-```
-
-С историей диалога:
-
-```bash
-curl -X POST http://localhost:8080/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "А что насчёт goroutines?",
-    "history": [
-      {"role": "user", "content": "Привет! Расскажи про Go."},
-      {"role": "assistant", "content": "Go — язык от Google..."}
-    ]
-  }'
-```
-
-## Переменные окружения
-
-| Переменная         | По умолчанию                                  | Описание              |
-|--------------------|-----------------------------------------------|-----------------------|
-| `DEEPSEEK_API_KEY` | —                                             | API-ключ (обязательно)|
-| `DEEPSEEK_MODEL`   | `deepseek-v4-flash`                           | Модель DeepSeek       |
-| `DEEPSEEK_API_URL` | `https://api.deepseek.com/chat/completions`   | URL API               |
-| `PORT`             | `8080`                                        | Порт сервера          |
-
-## Структура проекта
+## Структура
 
 ```
-cmd/server/              — точка входа
-internal/config/         — конфигурация из env
-internal/deepseek/       — клиент DeepSeek API
-internal/handler/        — HTTP-обработчики и веб-UI
-internal/handler/web/    — HTML, CSS, JS чата
+cmd/server/           — точка входа, сборка Agent + HTTP
+internal/agent/       — сущность агента (Handle / buildMessages)
+internal/deepseek/    — клиент LLM API
+internal/handler/     — HTTP + web UI
+internal/config/      — env
 ```

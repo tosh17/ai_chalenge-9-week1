@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/tosh17/deepseek-service/internal/agent"
 	"github.com/tosh17/deepseek-service/internal/config"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 	"github.com/tosh17/deepseek-service/internal/handler"
@@ -16,13 +17,14 @@ func main() {
 	}
 
 	client := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	h := handler.New(client, cfg.DeepSeekModel)
+	chatAgent := agent.New("day6-chat-agent", client)
+	h := handler.New(chatAgent, cfg.DeepSeekModel)
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
 	addr := ":" + cfg.Port
-	log.Printf("server listening on %s (model: %s)", addr, cfg.DeepSeekModel)
+	log.Printf("server listening on %s (agent: %s, model: %s)", addr, chatAgent.Name(), cfg.DeepSeekModel)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}
