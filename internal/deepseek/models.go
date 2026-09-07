@@ -7,16 +7,20 @@ const (
 	TierWeak   ModelTier = "weak"
 	TierMedium ModelTier = "medium"
 	TierStrong ModelTier = "strong"
+	TierLocal  ModelTier = "local"
 )
 
-// ModelSpec описывает конфигурацию запроса к DeepSeek.
+// ModelSpec описывает конфигурацию запроса.
 type ModelSpec struct {
 	ID          ModelTier `json:"id"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Model       string    `json:"model"`
-	Thinking    string    `json:"thinking"` // enabled | disabled
+	Thinking    string    `json:"thinking"` // enabled | disabled | "" для локальной
 	Effort      string    `json:"effort,omitempty"`
+	BaseURL     string    `json:"-"` // пусто → DeepSeek URL клиента
+	APIKey      string    `json:"-"`
+	Local       bool      `json:"local,omitempty"`
 }
 
 // PricingUSD — цена за 1M токенов (off-peak, ориентир для оценки стоимости).
@@ -39,9 +43,33 @@ var modelPricing = map[string]PricingUSD{
 	},
 }
 
-// TierSpecs — три уровня: Flash без thinking, Flash с thinking, Pro с thinking.
-func TierSpecs() []ModelSpec {
-	return []ModelSpec{
+// LocalModelConfig — OpenAI-compatible endpoint в LAN (например Qwen на 10.10.0.220).
+type LocalModelConfig struct {
+	Enabled bool
+	BaseURL string // полный URL .../v1/chat/completions или .../v1
+	APIKey  string
+	Model   string
+	Title   string
+}
+
+func NormalizeChatCompletionsURL(base string) string {
+	if base == "" {
+		return ""
+	}
+	// принимаем и .../v1, и .../v1/chat/completions
+	for len(base) > 0 && base[len(base)-1] == '/' {
+		base = base[:len(base)-1]
+	}
+	const suffix = "/chat/completions"
+	if len(base) >= len(suffix) && base[len(base)-len(suffix):] == suffix {
+		return base
+	}
+	return base + suffix
+}
+
+// TierSpecs — DeepSeek уровни + опционально локальная модель.
+func TierSpecs(local LocalModelConfig) []ModelSpec {
+	specs := []ModelSpec{
 		{
 			ID:          TierWeak,
 			Title:       "Слабая · Flash",
@@ -66,9 +94,31 @@ func TierSpecs() []ModelSpec {
 			Effort:      "high",
 		},
 	}
+
+	if local.Enabled && local.BaseURL != "" && local.Model != "" {
+		title := local.Title
+		if title == "" {
+			title = "Локальная · " + local.Model
+		}
+		specs = append(specs, ModelSpec{
+			ID:          TierLocal,
+			Title:       title,
+			Description: "LAN OpenAI-compatible · " + local.Model + " · $0",
+			Model:       local.Model,
+			Thinking:    "",
+			BaseURL:     NormalizeChatCompletionsURL(local.BaseURL),
+			APIKey:      local.APIKey,
+			Local:       true,
+		})
+	}
+
+	return specs
 }
 
-func EstimateCostUSD(model string, usage Usage) float64 {
+func EstimateCostUSD(model string, usage Usage, local bool) float64 {
+	if local {
+		return 0
+	}
 	p, ok := modelPricing[model]
 	if !ok {
 		p = modelPricing["deepseek-v4-flash"]

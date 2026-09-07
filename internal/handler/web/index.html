@@ -14,8 +14,8 @@
           <div class="header__logo">DS</div>
           <div>
             <h1 class="header__title">Сравнение моделей</h1>
-            <p class="header__subtitle">
-              Flash / Flash Think / Pro · токены, время, $/токен·с
+            <p class="header__subtitle" id="headerSubtitle">
+              Выберите модели в настройках · токены, время, $/токен·с
             </p>
           </div>
         </div>
@@ -25,6 +25,9 @@
             <span class="debug-toggle__track"></span>
             <span>Отладка</span>
           </label>
+          <button type="button" id="settingsBtn" class="btn btn--ghost" title="Настройки">
+            Настройки
+          </button>
           <button type="button" id="clearBtn" class="btn btn--ghost" title="Очистить диалог">
             Очистить
           </button>
@@ -34,13 +37,10 @@
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
           <div class="welcome__icon">⚡</div>
-          <h2>Бенчмарк моделей DeepSeek</h2>
+          <h2>Бенчмарк моделей</h2>
           <p>
-            Один вопрос уйдёт параллельно на три уровня:
-            <strong>Flash</strong> (слабая),
-            <strong>Flash + thinking</strong> (средняя),
-            <strong>Pro + thinking</strong> (сильная).
-            Сравним качество, скорость и стоимость.
+            В настройках отметьте, какие модели тестировать.
+            Вопрос уйдёт параллельно только на выбранные — сравним качество, скорость и стоимость.
           </p>
         </div>
       </main>
@@ -63,7 +63,7 @@
             </svg>
           </button>
         </form>
-        <p class="composer__hint">Enter — сравнить · 3 запроса параллельно · Стоп — прервать</p>
+        <p class="composer__hint">Enter — сравнить · запросы параллельно · Стоп — прервать</p>
       </footer>
     </div>
 
@@ -76,6 +76,29 @@
         <p class="debug-panel__empty">Запросы и ответы появятся здесь после отправки сообщения.</p>
       </div>
     </aside>
+  </div>
+
+  <div class="modal" id="settingsModal" hidden>
+    <div class="modal__backdrop" data-close-settings></div>
+    <div class="modal__dialog" role="dialog" aria-labelledby="settingsTitle" aria-modal="true">
+      <header class="modal__header">
+        <h2 id="settingsTitle">Настройки</h2>
+        <button type="button" class="btn btn--ghost btn--sm" data-close-settings aria-label="Закрыть">✕</button>
+      </header>
+      <div class="modal__body">
+        <section class="settings-section">
+          <h3 class="settings-section__title">Модели для теста</h3>
+          <p class="settings-section__hint">
+            Отметьте, какие модели участвуют в сравнении. Хотя бы одна должна быть выбрана.
+          </p>
+          <div class="model-checks" id="modelChecks"></div>
+        </section>
+      </div>
+      <footer class="modal__footer">
+        <button type="button" class="btn btn--ghost" data-close-settings>Отмена</button>
+        <button type="button" id="saveSettingsBtn" class="btn btn--accent">Сохранить</button>
+      </footer>
+    </div>
   </div>
 
   <script src="/static/chat.js"></script>

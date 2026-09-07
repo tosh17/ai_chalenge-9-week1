@@ -5,6 +5,11 @@ const inputEl = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
 const stopBtn = document.getElementById("stopBtn");
 const clearBtn = document.getElementById("clearBtn");
+const settingsBtn = document.getElementById("settingsBtn");
+const settingsModal = document.getElementById("settingsModal");
+const saveSettingsBtn = document.getElementById("saveSettingsBtn");
+const modelChecks = document.getElementById("modelChecks");
+const headerSubtitle = document.getElementById("headerSubtitle");
 const layoutEl = document.getElementById("layout");
 const debugToggle = document.getElementById("debugToggle");
 const debugPanel = document.getElementById("debugPanel");
@@ -12,12 +17,20 @@ const debugLog = document.getElementById("debugLog");
 const clearDebugBtn = document.getElementById("clearDebugBtn");
 
 const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day5";
+const MODELS_STORAGE_KEY = "deepseek-chat-enabled-models-day5";
 
 let isLoading = false;
 let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {AbortController | null} */
 let activeAbort = null;
+
+/** @type {{id: string, title: string, description: string, model: string, thinking?: string, local?: boolean}[]} */
+let availableModels = [];
+/** @type {Set<string>} */
+let enabledModels = new Set();
+/** @type {Set<string>} */
+let draftEnabled = new Set();
 
 function hideWelcome() {
   if (welcomeEl) welcomeEl.style.display = "none";
@@ -38,6 +51,7 @@ function setLoading(loading) {
   sendBtn.disabled = loading;
   inputEl.disabled = loading;
   stopBtn.hidden = !loading;
+  settingsBtn.disabled = loading;
 }
 
 function autoResizeTextarea() {
@@ -103,6 +117,86 @@ function logExchange({ requestBody, status, responseBody, durationMs }) {
   debugLog.prepend(entry);
 }
 
+function loadEnabledFromStorage(ids) {
+  try {
+    const raw = localStorage.getItem(MODELS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) {
+        const allowed = new Set(ids);
+        const selected = parsed.filter((id) => allowed.has(id));
+        if (selected.length) return new Set(selected);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return new Set(ids);
+}
+
+function saveEnabledModels(ids) {
+  enabledModels = new Set(ids);
+  localStorage.setItem(MODELS_STORAGE_KEY, JSON.stringify([...enabledModels]));
+  updateHeaderSubtitle();
+}
+
+function updateHeaderSubtitle() {
+  const titles = availableModels
+    .filter((m) => enabledModels.has(m.id))
+    .map((m) => m.title.replace(/^[^·]*·\s*/, "").trim() || m.title);
+  if (!titles.length) {
+    headerSubtitle.textContent = "Модели не выбраны · откройте настройки";
+    return;
+  }
+  headerSubtitle.textContent = `${titles.join(" / ")} · токены, время, $/токен·с`;
+}
+
+function renderModelChecks(selected) {
+  modelChecks.innerHTML = "";
+  for (const m of availableModels) {
+    const label = document.createElement("label");
+    label.className = "model-check";
+    const checked = selected.has(m.id);
+    label.innerHTML = `
+      <input type="checkbox" value="${escapeHTML(m.id)}" ${checked ? "checked" : ""}>
+      <span class="model-check__body">
+        <span class="model-check__title">${escapeHTML(m.title)}</span>
+        <span class="model-check__desc">${escapeHTML(m.description)}</span>
+      </span>
+    `;
+    const input = label.querySelector("input");
+    input.addEventListener("change", () => {
+      if (input.checked) draftEnabled.add(m.id);
+      else draftEnabled.delete(m.id);
+    });
+    modelChecks.appendChild(label);
+  }
+}
+
+function openSettings() {
+  draftEnabled = new Set(enabledModels);
+  renderModelChecks(draftEnabled);
+  settingsModal.hidden = false;
+}
+
+function closeSettings() {
+  settingsModal.hidden = true;
+}
+
+async function loadModels() {
+  try {
+    const res = await fetch("/api/models");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    availableModels = Array.isArray(data.models) ? data.models : [];
+  } catch {
+    availableModels = [];
+  }
+  const ids = availableModels.map((m) => m.id);
+  enabledModels = loadEnabledFromStorage(ids);
+  updateHeaderSubtitle();
+}
+
 function createUserMessage(text) {
   hideWelcome();
   const el = document.createElement("div");
@@ -141,7 +235,7 @@ function createCompareBlock() {
           </thead>
           <tbody></tbody>
         </table>
-        <p class="stats-table__hint">Стоимость — оценка по off-peak тарифам DeepSeek (cache hit/miss + output).</p>
+        <p class="stats-table__hint">Стоимость — оценка по off-peak тарифам DeepSeek (cache hit/miss + output). Локальная модель = $0.</p>
       </div>
     </div>
   `;
@@ -199,6 +293,7 @@ function formatDuration(ms) {
 
 function formatCost(usd) {
   if (usd == null || Number.isNaN(usd)) return "—";
+  if (usd === 0) return "$0";
   if (usd < 0.0001) return `$${usd.toFixed(6)}`;
   return `$${usd.toFixed(5)}`;
 }
@@ -218,9 +313,7 @@ function fillCard(card, result, { autoOpen = false } = {}) {
   card.classList.toggle("strategy-card--ready", !hasError);
 
   const stats = result.stats || {};
-  badge.innerHTML = hasError
-    ? "ошибка"
-    : formatDuration(stats.duration_ms);
+  badge.innerHTML = hasError ? "ошибка" : formatDuration(stats.duration_ms);
 
   if (hasError) {
     body.innerHTML = `<pre class="strategy-card__reply">${escapeHTML(result.error)}</pre>`;
@@ -257,7 +350,7 @@ function renderStatsTable(compareEl, results) {
   const tbody = wrap.querySelector("tbody");
   tbody.innerHTML = "";
 
-  const ordered = ["weak", "medium", "strong"];
+  const ordered = ["weak", "medium", "strong", "local"];
   const byId = Object.fromEntries(results.map((r) => [r.id, r]));
 
   for (const id of ordered) {
@@ -269,7 +362,7 @@ function renderStatsTable(compareEl, results) {
     tr.innerHTML = `
       <td>
         <div class="stats-table__model">${escapeHTML(r.title)}</div>
-        <div class="stats-table__model-id">${escapeHTML(r.model)} · ${escapeHTML(r.thinking)}</div>
+        <div class="stats-table__model-id">${escapeHTML(r.model)}${r.thinking ? ` · ${escapeHTML(r.thinking)}` : ""}</div>
       </td>
       <td>${r.error ? "—" : formatDuration(s.duration_ms)}</td>
       <td>${r.error ? "—" : (s.prompt_tokens ?? 0)}</td>
@@ -320,12 +413,18 @@ async function consumeSSE(response, onEvent) {
 }
 
 async function sendCompare(text) {
+  const selected = [...enabledModels];
+  if (!selected.length) {
+    openSettings();
+    return;
+  }
+
   createUserMessage(text);
   setLoading(true);
   activeAbort = new AbortController();
 
   const compareEl = createCompareBlock();
-  const requestBody = { message: text };
+  const requestBody = { message: text, models: selected };
   const started = performance.now();
   let finalResults = [];
 
@@ -352,7 +451,9 @@ async function sendCompare(text) {
         ensureCard(compareEl, payload);
       } else if (event === "card_done") {
         const card = ensureCard(compareEl, payload);
-        fillCard(card, payload, { autoOpen: payload.id === "strong" && !payload.error });
+        fillCard(card, payload, { autoOpen: (payload.id === "strong" || payload.id === "local") && !payload.error });
+      } else if (event === "error") {
+        /* shown via empty/done */
       } else if (event === "done" || event === "aborted") {
         finalResults = payload.results || [];
         renderStatsTable(compareEl, finalResults);
@@ -421,6 +522,24 @@ clearBtn.addEventListener("click", () => {
   inputEl.focus();
 });
 
+settingsBtn.addEventListener("click", openSettings);
+saveSettingsBtn.addEventListener("click", () => {
+  if (!draftEnabled.size) {
+    alert("Выберите хотя бы одну модель");
+    return;
+  }
+  saveEnabledModels([...draftEnabled]);
+  closeSettings();
+});
+
+settingsModal.querySelectorAll("[data-close-settings]").forEach((el) => {
+  el.addEventListener("click", closeSettings);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !settingsModal.hidden) closeSettings();
+});
+
 debugToggle.addEventListener("change", () => {
   setDebugMode(debugToggle.checked);
 });
@@ -428,4 +547,4 @@ debugToggle.addEventListener("change", () => {
 clearDebugBtn.addEventListener("click", clearDebugLog);
 
 setDebugMode(debugEnabled);
-inputEl.focus();
+loadModels().then(() => inputEl.focus());

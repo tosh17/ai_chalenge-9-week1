@@ -37,7 +37,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Models(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"models": deepseek.TierSpecs()})
+	writeJSON(w, http.StatusOK, map[string]any{"models": h.client.Specs()})
 }
 
 func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +80,8 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 }
 
 type compareRequestBody struct {
-	Message string `json:"message"`
+	Message string   `json:"message"`
+	Models  []string `json:"models,omitempty"`
 }
 
 // Compare стримит SSE: card_start / card_done / done / aborted.
@@ -117,11 +118,32 @@ func (h *Handler) Compare(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	for _, meta := range deepseek.TierSpecs() {
+	specs := h.client.Specs()
+	if len(req.Models) > 0 {
+		want := make(map[string]struct{}, len(req.Models))
+		for _, id := range req.Models {
+			want[id] = struct{}{}
+		}
+		filtered := make([]deepseek.ModelSpec, 0, len(req.Models))
+		for _, meta := range specs {
+			if _, ok := want[string(meta.ID)]; ok {
+				filtered = append(filtered, meta)
+			}
+		}
+		specs = filtered
+	}
+
+	if len(specs) == 0 {
+		writeSSE("error", map[string]string{"error": "не выбрана ни одна модель"})
+		writeSSE("done", map[string]any{"results": []any{}})
+		return
+	}
+
+	for _, meta := range specs {
 		writeSSE("card_start", meta)
 	}
 
-	results := h.client.Compare(r.Context(), req.Message, func(result deepseek.ModelCompareResult) {
+	results := h.client.Compare(r.Context(), req.Message, req.Models, func(result deepseek.ModelCompareResult) {
 		writeSSE("card_done", result)
 	})
 

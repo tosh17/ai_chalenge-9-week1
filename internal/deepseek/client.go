@@ -15,6 +15,7 @@ type Client struct {
 	apiKey  string
 	model   string
 	baseURL string
+	local   LocalModelConfig
 	http    *http.Client
 }
 
@@ -54,11 +55,11 @@ type chatResponse struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens          int `json:"prompt_tokens"`
-		CompletionTokens      int `json:"completion_tokens"`
-		TotalTokens           int `json:"total_tokens"`
-		PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
-		PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
+		PromptTokens            int `json:"prompt_tokens"`
+		CompletionTokens        int `json:"completion_tokens"`
+		TotalTokens             int `json:"total_tokens"`
+		PromptCacheHitTokens    int `json:"prompt_cache_hit_tokens"`
+		PromptCacheMissTokens   int `json:"prompt_cache_miss_tokens"`
 		CompletionTokensDetails *struct {
 			ReasoningTokens int `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
@@ -85,15 +86,15 @@ type ChatResult struct {
 }
 
 type ModelStats struct {
-	DurationMs      int64   `json:"duration_ms"`
-	PromptTokens    int     `json:"prompt_tokens"`
-	CompletionTokens int    `json:"completion_tokens"`
-	ReasoningTokens int     `json:"reasoning_tokens"`
-	TotalTokens     int     `json:"total_tokens"`
-	CacheHitTokens  int     `json:"cache_hit_tokens"`
-	CacheMissTokens int     `json:"cache_miss_tokens"`
-	TokensPerSec    float64 `json:"tokens_per_sec"`
-	CostUSD         float64 `json:"cost_usd"`
+	DurationMs       int64   `json:"duration_ms"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	ReasoningTokens  int     `json:"reasoning_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	CacheHitTokens   int     `json:"cache_hit_tokens"`
+	CacheMissTokens  int     `json:"cache_miss_tokens"`
+	TokensPerSec     float64 `json:"tokens_per_sec"`
+	CostUSD          float64 `json:"cost_usd"`
 }
 
 type ModelCompareResult struct {
@@ -102,6 +103,7 @@ type ModelCompareResult struct {
 	Description      string     `json:"description"`
 	Model            string     `json:"model"`
 	Thinking         string     `json:"thinking"`
+	Local            bool       `json:"local,omitempty"`
 	Reply            string     `json:"reply,omitempty"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 	FinishReason     string     `json:"finish_reason,omitempty"`
@@ -109,15 +111,24 @@ type ModelCompareResult struct {
 	Error            string     `json:"error,omitempty"`
 }
 
-func NewClient(apiKey, model, baseURL string) *Client {
+func NewClient(apiKey, model, baseURL string, local LocalModelConfig) *Client {
 	return &Client{
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: baseURL,
+		local:   local,
 		http: &http.Client{
 			Timeout: 180 * time.Second,
 		},
 	}
+}
+
+func (c *Client) LocalEnabled() bool {
+	return c.local.Enabled
+}
+
+func (c *Client) Specs() []ModelSpec {
+	return TierSpecs(c.local)
 }
 
 func (c *Client) Chat(ctx context.Context, messages []Message) (ChatResult, error) {
@@ -134,10 +145,12 @@ func (c *Client) ChatModel(ctx context.Context, messages []Message, spec ModelSp
 		Model:    spec.Model,
 		Messages: messages,
 		Stream:   false,
-		Thinking: &thinkingParam{Type: spec.Thinking},
 	}
-	if spec.Thinking == "enabled" && spec.Effort != "" {
-		payload.ReasoningEffort = spec.Effort
+	if !spec.Local && spec.Thinking != "" {
+		payload.Thinking = &thinkingParam{Type: spec.Thinking}
+		if spec.Thinking == "enabled" && spec.Effort != "" {
+			payload.ReasoningEffort = spec.Effort
+		}
 	}
 
 	body, err := json.Marshal(payload)
@@ -145,17 +158,28 @@ func (c *Client) ChatModel(ctx context.Context, messages []Message, spec ModelSp
 		return ChatResult{}, fmt.Errorf("marshal request: %w", err)
 	}
 
+	url := c.baseURL
+	apiKey := c.apiKey
+	if spec.BaseURL != "" {
+		url = spec.BaseURL
+	}
+	if spec.APIKey != "" {
+		apiKey = spec.APIKey
+	}
+
 	debug := DebugInfo{
-		URL:     c.baseURL,
+		URL:     url,
 		Request: json.RawMessage(body),
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return ChatResult{}, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -178,13 +202,13 @@ func (c *Client) ChatModel(ctx context.Context, messages []Message, spec ModelSp
 		return ChatResult{Debug: debug}, fmt.Errorf("decode response: %w", err)
 	}
 	if result.Error != nil {
-		return ChatResult{Debug: debug}, fmt.Errorf("deepseek api error: %s", result.Error.Message)
+		return ChatResult{Debug: debug}, fmt.Errorf("api error: %s", result.Error.Message)
 	}
 	if resp.StatusCode >= 400 {
-		return ChatResult{Debug: debug}, fmt.Errorf("deepseek api returned status %d: %s", resp.StatusCode, string(respBody))
+		return ChatResult{Debug: debug}, fmt.Errorf("api returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 	if len(result.Choices) == 0 {
-		return ChatResult{Debug: debug}, fmt.Errorf("empty response from deepseek")
+		return ChatResult{Debug: debug}, fmt.Errorf("empty response from api")
 	}
 
 	usage := Usage{}
@@ -223,15 +247,16 @@ func buildStats(spec ModelSpec, result ChatResult) ModelStats {
 		CacheHitTokens:   result.Usage.PromptCacheHitTokens,
 		CacheMissTokens:  result.Usage.PromptCacheMissTokens,
 		TokensPerSec:     tps,
-		CostUSD:          EstimateCostUSD(spec.Model, result.Usage),
+		CostUSD:          EstimateCostUSD(spec.Model, result.Usage, spec.Local),
 	}
 }
 
 type CompareProgress func(result ModelCompareResult)
 
-// Compare запускает три уровня параллельно и отдаёт результаты по готовности.
-func (c *Client) Compare(ctx context.Context, question string, onDone CompareProgress) []ModelCompareResult {
-	specs := TierSpecs()
+// Compare запускает выбранные уровни параллельно и отдаёт результаты по готовности.
+// Если modelIDs пуст — запускаются все доступные.
+func (c *Client) Compare(ctx context.Context, question string, modelIDs []string, onDone CompareProgress) []ModelCompareResult {
+	specs := filterSpecs(c.Specs(), modelIDs)
 	results := make([]ModelCompareResult, len(specs))
 	var wg sync.WaitGroup
 
@@ -247,6 +272,7 @@ func (c *Client) Compare(ctx context.Context, question string, onDone ComparePro
 				Description: spec.Description,
 				Model:       spec.Model,
 				Thinking:    spec.Thinking,
+				Local:       spec.Local,
 			}
 
 			res, err := c.ChatModel(ctx, messages, spec)
@@ -269,4 +295,21 @@ func (c *Client) Compare(ctx context.Context, question string, onDone ComparePro
 
 	wg.Wait()
 	return results
+}
+
+func filterSpecs(all []ModelSpec, modelIDs []string) []ModelSpec {
+	if len(modelIDs) == 0 {
+		return all
+	}
+	want := make(map[ModelTier]struct{}, len(modelIDs))
+	for _, id := range modelIDs {
+		want[ModelTier(id)] = struct{}{}
+	}
+	out := make([]ModelSpec, 0, len(want))
+	for _, spec := range all {
+		if _, ok := want[spec.ID]; ok {
+			out = append(out, spec)
+		}
+	}
+	return out
 }
