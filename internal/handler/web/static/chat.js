@@ -4,19 +4,32 @@ const formEl = document.getElementById("chatForm");
 const inputEl = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
 const clearBtn = document.getElementById("clearBtn");
+const designBtn = document.getElementById("designBtn");
 const layoutEl = document.getElementById("layout");
 const debugToggle = document.getElementById("debugToggle");
 const debugPanel = document.getElementById("debugPanel");
 const debugLog = document.getElementById("debugLog");
 const clearDebugBtn = document.getElementById("clearDebugBtn");
+const providerSelect = document.getElementById("providerSelect");
+const providerLabel = document.getElementById("providerLabel");
+const appTitle = document.getElementById("appTitle");
+const welcomeTitle = document.getElementById("welcomeTitle");
+const welcomeText = document.getElementById("welcomeText");
+const appSubtitle = document.getElementById("appSubtitle");
 
-const DEBUG_STORAGE_KEY = "deepseek-chat-debug";
+const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day6";
+const PROVIDER_STORAGE_KEY = "day6-chat-provider";
 
 /** @type {{role: string, content: string}[]} */
 let history = [];
 let isLoading = false;
 let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
+/** @type {{id: string, title: string, model: string}[]} */
+let providers = [];
+
+const DEFAULT_DESIGN_WISH =
+  "Сделай веб-чат в ярком мультяшном стиле американского ситкома 90-х: жёлтый, голубое небо, толстые чёрные контуры, комикс, весело и дерзко, без копирования чужих персонажей.";
 
 function hideWelcome() {
   if (welcomeEl) welcomeEl.style.display = "none";
@@ -74,6 +87,8 @@ function setLoading(loading) {
   isLoading = loading;
   sendBtn.disabled = loading;
   inputEl.disabled = loading;
+  providerSelect.disabled = loading;
+  designBtn.disabled = loading;
 }
 
 function autoResizeTextarea() {
@@ -99,7 +114,7 @@ function setDebugMode(enabled) {
 
 function clearDebugLog() {
   debugEntryCount = 0;
-  debugLog.innerHTML = '<p class="debug-panel__empty">Запросы и ответы появятся здесь после отправки сообщения.</p>';
+  debugLog.innerHTML = '<p class="debug-panel__empty">Запросы и шаги агентов появятся здесь.</p>';
 }
 
 function appendDebugBlock(title, payload, extraClass = "") {
@@ -114,7 +129,7 @@ function appendDebugBlock(title, payload, extraClass = "") {
   `;
 }
 
-function logExchange({ requestBody, status, responseBody, durationMs, upstream }) {
+function logExchange({ requestBody, status, responseBody, durationMs, upstream, url = "/api/chat" }) {
   if (!debugEnabled) return;
 
   if (debugEntryCount === 0) {
@@ -131,17 +146,128 @@ function logExchange({ requestBody, status, responseBody, durationMs, upstream }
       <span class="debug-entry__status debug-entry__status--${status >= 200 && status < 300 ? "ok" : "err"}">${status}</span>
       <span class="debug-entry__duration">${durationMs} ms</span>
     </header>
-    ${appendDebugBlock("→ Запрос к /api/chat", {
+    ${appendDebugBlock(`→ ${url}`, {
       method: "POST",
-      url: "/api/chat",
-      headers: { "Content-Type": "application/json", "X-Debug": "true" },
+      url,
       body: requestBody,
     })}
-    ${appendDebugBlock("← Ответ /api/chat", responseBody, status >= 400 ? "debug-block__code--error" : "")}
-    ${upstream ? appendDebugBlock("↔ DeepSeek API", upstream) : ""}
+    ${appendDebugBlock("← ответ", responseBody, status >= 400 ? "debug-block__code--error" : "")}
+    ${upstream ? appendDebugBlock("↔ upstream", upstream) : ""}
   `;
 
   debugLog.prepend(entry);
+}
+
+function currentProvider() {
+  return providerSelect.value || "deepseek";
+}
+
+function updateProviderLabel() {
+  const p = providers.find((x) => x.id === currentProvider());
+  if (p) {
+    providerLabel.textContent = `${p.title} · ${p.model}`;
+  } else {
+    providerLabel.textContent = currentProvider();
+  }
+}
+
+function renderProviders(list) {
+  providers = list;
+  providerSelect.innerHTML = "";
+  for (const p of list) {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = `${p.title} (${p.model})`;
+    providerSelect.appendChild(opt);
+  }
+
+  const saved = localStorage.getItem(PROVIDER_STORAGE_KEY);
+  if (saved && list.some((p) => p.id === saved)) {
+    providerSelect.value = saved;
+  } else if (list.length) {
+    providerSelect.value = list[0].id;
+  }
+  updateProviderLabel();
+}
+
+async function loadProviders() {
+  try {
+    const res = await fetch("/api/providers");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data.providers) && data.providers.length) {
+      renderProviders(data.providers);
+    }
+  } catch {
+    /* keep defaults */
+  }
+}
+
+function applyTheme(cssVars, design) {
+  const root = document.documentElement;
+  if (cssVars && typeof cssVars === "object") {
+    for (const [key, value] of Object.entries(cssVars)) {
+      if (value) root.style.setProperty(key, value);
+    }
+  }
+  if (design?.title) appTitle.textContent = design.title;
+  if (design?.welcome_title) welcomeTitle.textContent = design.welcome_title;
+  if (design?.welcome_text) welcomeText.textContent = design.welcome_text;
+  if (design?.subtitle) appSubtitle.textContent = design.subtitle;
+}
+
+async function runDesignCrew() {
+  const wish = window.prompt("Что хотят агенты-дизайнеры?", DEFAULT_DESIGN_WISH);
+  if (wish === null) return;
+
+  setLoading(true);
+  const requestBody = { wish: wish.trim() || DEFAULT_DESIGN_WISH, provider: currentProvider() };
+  const started = performance.now();
+
+  try {
+    const res = await fetch("/api/design", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    const data = await res.json();
+    const durationMs = Math.round(performance.now() - started);
+
+    logExchange({
+      url: "/api/design",
+      requestBody,
+      status: res.status,
+      responseBody: data,
+      durationMs,
+    });
+
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Дизайн-команда упала", "message--error");
+      return;
+    }
+
+    applyTheme(data.css_vars, data.design);
+
+    const steps = (data.steps || [])
+      .map((s, i) => `${i + 1}. ${s.agent}`)
+      .join(" → ");
+    createMessage(
+      "assistant",
+      `Готово!\nЦепочка: ${steps}\nТема: ${data.design?.theme_name || "без имени"}\n\nПромпт:\n${data.prompt || ""}`
+    );
+  } catch (err) {
+    createMessage("assistant", "Не удалось связаться с дизайн-командой.", "message--error");
+    logExchange({
+      url: "/api/design",
+      requestBody,
+      status: 0,
+      responseBody: { error: String(err) },
+      durationMs: Math.round(performance.now() - started),
+    });
+  } finally {
+    setLoading(false);
+    inputEl.focus();
+  }
 }
 
 async function sendMessage(text) {
@@ -151,14 +277,16 @@ async function sendMessage(text) {
   setLoading(true);
   createTypingIndicator();
 
-  const requestBody = { message: text, history: history.slice(0, -1) };
+  const requestBody = {
+    message: text,
+    history: history.slice(0, -1),
+    provider: currentProvider(),
+  };
   const started = performance.now();
 
   try {
     const headers = { "Content-Type": "application/json" };
-    if (debugEnabled) {
-      headers["X-Debug"] = "true";
-    }
+    if (debugEnabled) headers["X-Debug"] = "true";
 
     const res = await fetch("/api/chat", {
       method: "POST",
@@ -236,6 +364,15 @@ clearBtn.addEventListener("click", () => {
   inputEl.focus();
 });
 
+designBtn.addEventListener("click", () => {
+  if (!isLoading) runDesignCrew();
+});
+
+providerSelect.addEventListener("change", () => {
+  localStorage.setItem(PROVIDER_STORAGE_KEY, currentProvider());
+  updateProviderLabel();
+});
+
 debugToggle.addEventListener("change", () => {
   setDebugMode(debugToggle.checked);
 });
@@ -243,4 +380,4 @@ debugToggle.addEventListener("change", () => {
 clearDebugBtn.addEventListener("click", clearDebugLog);
 
 setDebugMode(debugEnabled);
-inputEl.focus();
+loadProviders().then(() => inputEl.focus());

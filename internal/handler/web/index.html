@@ -3,24 +3,37 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Day6 · Chat Agent</title>
+  <title>Springfield Chat Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <div class="sky" aria-hidden="true"></div>
   <div class="layout" id="layout">
-    <div class="app">
+    <div class="app comic-panel">
       <header class="header">
         <div class="header__brand">
-          <div class="header__logo">DS</div>
+          <img class="header__logo-img" src="/static/img/agent-logo.png" alt="" width="56" height="56">
           <div>
-            <h1 class="header__title">Chat Agent</h1>
+            <h1 class="header__title" id="appTitle">Springfield Agent</h1>
             <p class="header__subtitle">
               Агент: <span class="header__model">day6-chat-agent</span>
-              · модель <span class="header__model" title="Модель LLM">{{.Model}}</span>
+              · <span id="providerLabel" class="header__model">DeepSeek</span>
             </p>
           </div>
         </div>
         <div class="header__actions">
+          <label class="provider-select" title="Выбор LLM-бэкенда">
+            <span class="provider-select__label">Мозги</span>
+            <select id="providerSelect" class="provider-select__control" aria-label="Провайдер модели">
+              <option value="deepseek">DeepSeek</option>
+            </select>
+          </label>
+          <button type="button" id="designBtn" class="btn btn--accent">
+            Рестайл
+          </button>
           <label class="debug-toggle" title="Показать панель отладки">
             <input type="checkbox" id="debugToggle">
             <span class="debug-toggle__track"></span>
@@ -34,9 +47,9 @@
 
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
-          <div class="welcome__icon">💬</div>
-          <h2>Простой агент</h2>
-          <p>Запрос уходит в отдельную сущность <code>Agent</code>, она вызывает LLM через API и возвращает ответ в чат.</p>
+          <img class="welcome__donut" src="/static/img/agent-logo.png" alt="" width="96" height="96">
+          <h2 id="welcomeTitle">D’oh! Начни диалог</h2>
+          <p id="welcomeText">Спроси что угодно — агент на связи.</p>
         </div>
       </main>
 
@@ -45,17 +58,17 @@
           <textarea
             id="messageInput"
             class="composer__input"
-            placeholder="Напишите сообщение…"
+            placeholder="Напиши что-нибудь гениальное…"
             rows="1"
             autofocus
           ></textarea>
           <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
             </svg>
           </button>
         </form>
-        <p class="composer__hint">Enter — отправить · Shift+Enter — новая строка</p>
+        <p class="composer__hint" id="appSubtitle">Enter — отправить</p>
       </footer>
     </div>
 
@@ -65,7 +78,7 @@
         <button type="button" id="clearDebugBtn" class="btn btn--ghost btn--sm">Очистить лог</button>
       </div>
       <div class="debug-panel__body" id="debugLog">
-        <p class="debug-panel__empty">Запросы и ответы появятся здесь после отправки сообщения.</p>
+        <p class="debug-panel__empty">Запросы и шаги агентов появятся здесь.</p>
       </div>
     </aside>
   </div>

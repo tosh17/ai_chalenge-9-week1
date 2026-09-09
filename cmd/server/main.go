@@ -16,15 +16,25 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	client := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day6-chat-agent", client)
-	h := handler.New(chatAgent, cfg.DeepSeekModel)
+	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
+	chatAgent := agent.New("day6-chat-agent").
+		WithBackend(agent.ProviderDeepSeek, "DeepSeek", cfg.DeepSeekModel, deepseekClient)
+
+	if cfg.LocalEnabled {
+		localURL := config.NormalizeChatURL(cfg.LocalAPIURL)
+		localClient := deepseek.NewClient(cfg.LocalAPIKey, cfg.LocalModel, localURL)
+		chatAgent.WithBackend(agent.ProviderLocal, cfg.LocalTitle, cfg.LocalModel, localClient)
+		log.Printf("local provider enabled: %s @ %s", cfg.LocalModel, localURL)
+	}
+
+	crew := agent.NewDesignCrew(chatAgent)
+	h := handler.New(chatAgent, crew, cfg.DeepSeekModel)
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
 	addr := ":" + cfg.Port
-	log.Printf("server listening on %s (agent: %s, model: %s)", addr, chatAgent.Name(), cfg.DeepSeekModel)
+	log.Printf("server listening on %s (agent: %s, providers: %d, design-crew: on)", addr, chatAgent.Name(), len(chatAgent.Providers()))
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}

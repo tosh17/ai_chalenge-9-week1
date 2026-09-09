@@ -28,7 +28,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("GET /{$}", h.Index)
 	mux.HandleFunc("GET /health", h.Health)
+	mux.HandleFunc("GET /api/providers", h.Providers)
 	mux.HandleFunc("POST /api/chat", h.Chat)
+	mux.HandleFunc("POST /api/design", h.Design)
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
