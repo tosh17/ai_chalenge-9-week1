@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
+	"github.com/tosh17/deepseek-service/internal/memory"
 )
 
 const (
@@ -30,8 +31,8 @@ type Provider struct {
 // Request — вход агента от пользователя / UI.
 type Request struct {
 	Message  string
-	History  []deepseek.Message
-	Provider string // deepseek | local
+	History  []deepseek.Message // устарело: при наличии memory игнорируется
+	Provider string             // deepseek | local
 }
 
 // Result — выход агента: ответ и служебные метаданные.
@@ -56,6 +57,7 @@ type Agent struct {
 	defaultID    string
 	backends     map[string]backend
 	order        []string
+	memory       *memory.Store
 }
 
 // New создаёт агента без бэкендов — добавляйте через WithBackend.
@@ -85,6 +87,33 @@ func (a *Agent) WithBackend(id, title, model string, llm LLM) *Agent {
 		a.defaultID = id
 	}
 	return a
+}
+
+// WithMemory подключает JSON-хранилище истории; при старте уже загружено в store.
+func (a *Agent) WithMemory(store *memory.Store) *Agent {
+	a.memory = store
+	return a
+}
+
+// Memory возвращает хранилище истории (может быть nil).
+func (a *Agent) Memory() *memory.Store {
+	return a.memory
+}
+
+// History — сохранённые user/assistant сообщения (без system).
+func (a *Agent) History() []deepseek.Message {
+	if a.memory == nil {
+		return nil
+	}
+	return a.memory.Messages()
+}
+
+// ClearHistory очищает персистентный контекст.
+func (a *Agent) ClearHistory() error {
+	if a.memory == nil {
+		return nil
+	}
+	return a.memory.Clear()
 }
 
 // Name возвращает имя агента.
@@ -136,6 +165,20 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
 
+	if a.memory != nil {
+		if saveErr := a.memory.Append(
+			deepseek.Message{Role: "user", Content: req.Message},
+			deepseek.Message{Role: "assistant", Content: chat.Reply},
+		); saveErr != nil {
+			return Result{
+				Reply:      chat.Reply,
+				Provider:   providerID,
+				Model:      b.model,
+				DurationMs: duration,
+			}, fmt.Errorf("agent %q: save memory: %w", a.name, saveErr)
+		}
+	}
+
 	debug := chat.Debug
 	return Result{
 		Reply:      chat.Reply,
@@ -147,14 +190,19 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 }
 
 func (a *Agent) buildMessages(req Request) []deepseek.Message {
-	out := make([]deepseek.Message, 0, len(req.History)+2)
+	history := req.History
+	if a.memory != nil {
+		history = a.memory.Messages()
+	}
+
+	out := make([]deepseek.Message, 0, len(history)+2)
 	if a.systemPrompt != "" {
 		out = append(out, deepseek.Message{
 			Role:    "system",
 			Content: a.systemPrompt,
 		})
 	}
-	for _, m := range req.History {
+	for _, m := range history {
 		if m.Role == "system" {
 			continue
 		}

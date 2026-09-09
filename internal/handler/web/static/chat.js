@@ -17,8 +17,8 @@ const welcomeTitle = document.getElementById("welcomeTitle");
 const welcomeText = document.getElementById("welcomeText");
 const appSubtitle = document.getElementById("appSubtitle");
 
-const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day6";
-const PROVIDER_STORAGE_KEY = "day6-chat-provider";
+const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day7";
+const PROVIDER_STORAGE_KEY = "day7-chat-provider";
 
 /** @type {{role: string, content: string}[]} */
 let history = [];
@@ -190,6 +190,26 @@ function renderProviders(list) {
   updateProviderLabel();
 }
 
+async function loadHistory() {
+  try {
+    const res = await fetch("/api/history");
+    if (!res.ok) return;
+    const data = await res.json();
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    history = messages
+      .filter((m) => m && (m.role === "user" || m.role === "assistant") && m.content)
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    if (!history.length) return;
+
+    for (const m of history) {
+      createMessage(m.role, m.content);
+    }
+  } catch {
+    /* keep empty */
+  }
+}
+
 async function loadProviders() {
   try {
     const res = await fetch("/api/providers");
@@ -272,14 +292,13 @@ async function runDesignCrew() {
 
 async function sendMessage(text) {
   createMessage("user", text);
-  history.push({ role: "user", content: text });
 
   setLoading(true);
   createTypingIndicator();
 
+  // История на сервере: агент сам подставляет сохранённый контекст.
   const requestBody = {
     message: text,
-    history: history.slice(0, -1),
     provider: currentProvider(),
   };
   const started = performance.now();
@@ -309,11 +328,11 @@ async function sendMessage(text) {
 
     if (!res.ok) {
       createMessage("assistant", data.error || "Неизвестная ошибка", "message--error");
-      history.pop();
       return;
     }
 
     createMessage("assistant", data.reply);
+    history.push({ role: "user", content: text });
     history.push({ role: "assistant", content: data.reply });
   } catch (err) {
     removeTypingIndicator();
@@ -328,7 +347,6 @@ async function sendMessage(text) {
     });
 
     createMessage("assistant", "Не удалось связаться с сервером.", "message--error");
-    history.pop();
   } finally {
     setLoading(false);
     inputEl.focus();
@@ -354,7 +372,12 @@ inputEl.addEventListener("keydown", (e) => {
 
 inputEl.addEventListener("input", autoResizeTextarea);
 
-clearBtn.addEventListener("click", () => {
+clearBtn.addEventListener("click", async () => {
+  try {
+    await fetch("/api/history", { method: "DELETE" });
+  } catch {
+    /* still clear UI */
+  }
   history = [];
   chatEl.innerHTML = "";
   if (welcomeEl) {
@@ -380,4 +403,4 @@ debugToggle.addEventListener("change", () => {
 clearDebugBtn.addEventListener("click", clearDebugLog);
 
 setDebugMode(debugEnabled);
-loadProviders().then(() => inputEl.focus());
+Promise.all([loadProviders(), loadHistory()]).then(() => inputEl.focus());

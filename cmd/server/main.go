@@ -8,6 +8,7 @@ import (
 	"github.com/tosh17/deepseek-service/internal/config"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 	"github.com/tosh17/deepseek-service/internal/handler"
+	"github.com/tosh17/deepseek-service/internal/memory"
 )
 
 func main() {
@@ -16,8 +17,15 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	store, err := memory.Open(cfg.ChatHistoryPath)
+	if err != nil {
+		log.Fatalf("memory: %v", err)
+	}
+	log.Printf("chat memory: %s (%d messages)", store.Path(), store.Len())
+
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day6-chat-agent").
+	chatAgent := agent.New("day7-chat-agent").
+		WithMemory(store).
 		WithBackend(agent.ProviderDeepSeek, "DeepSeek", cfg.DeepSeekModel, deepseekClient)
 
 	if cfg.LocalEnabled {
@@ -34,7 +42,7 @@ func main() {
 	h.RegisterRoutes(mux)
 
 	addr := ":" + cfg.Port
-	log.Printf("server listening on %s (agent: %s, providers: %d, design-crew: on)", addr, chatAgent.Name(), len(chatAgent.Providers()))
+	log.Printf("server listening on %s (agent: %s, providers: %d, memory: on)", addr, chatAgent.Name(), len(chatAgent.Providers()))
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}

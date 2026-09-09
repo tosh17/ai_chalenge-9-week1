@@ -43,11 +43,35 @@ type errorResponseBody struct {
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"status":    "ok",
 		"agent":     h.agent.Name(),
 		"providers": h.agent.Providers(),
+	}
+	if mem := h.agent.Memory(); mem != nil {
+		payload["memory_path"] = mem.Path()
+		payload["memory_messages"] = mem.Len()
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
+	msgs := h.agent.History()
+	if msgs == nil {
+		msgs = []deepseek.Message{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"messages": msgs,
+		"count":    len(msgs),
 	})
+}
+
+func (h *Handler) ClearHistory(w http.ResponseWriter, r *http.Request) {
+	if err := h.agent.ClearHistory(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "messages": []deepseek.Message{}})
 }
 
 func (h *Handler) Providers(w http.ResponseWriter, r *http.Request) {

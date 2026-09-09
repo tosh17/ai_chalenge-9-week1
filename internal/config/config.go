@@ -17,17 +17,20 @@ type Config struct {
 	LocalAPIKey  string
 	LocalModel   string
 	LocalTitle   string
+
+	ChatHistoryPath string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:          getEnv("PORT", "8080"),
-		DeepSeekModel: getEnv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-		DeepSeekURL:   getEnv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions"),
-		LocalAPIURL:   getEnv("LOCAL_API_URL", ""),
-		LocalAPIKey:   getEnv("LOCAL_API_KEY", ""),
-		LocalModel:    getEnv("LOCAL_MODEL", "qwen-local"),
-		LocalTitle:    getEnv("LOCAL_TITLE", "Local-Qwen"),
+		Port:            getEnv("PORT", "8080"),
+		DeepSeekModel:   getEnv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+		DeepSeekURL:     getEnv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions"),
+		LocalAPIURL:     getEnv("LOCAL_API_URL", ""),
+		LocalAPIKey:     getEnv("LOCAL_API_KEY", ""),
+		LocalModel:      getEnv("LOCAL_MODEL", "qwen-local"),
+		LocalTitle:      getEnv("LOCAL_TITLE", "Local-Qwen"),
+		ChatHistoryPath: getEnv("CHAT_HISTORY_PATH", "data/chat-history.json"),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
