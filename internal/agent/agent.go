@@ -37,17 +37,21 @@ type Request struct {
 	Message  string
 	History  []deepseek.Message // устарело: при наличии memory игнорируется
 	Provider string             // deepseek | local
+	// Compress: nil = настройка агента; &true/&false = явный режим на этот ход.
+	Compress *bool
 }
 
 // Result — выход агента: ответ и служебные метаданные.
 type Result struct {
-	Reply      string
-	Provider   string
-	Model      string
-	DurationMs int64
-	Tokens     *tokens.Usage         `json:"tokens,omitempty"`
-	Session    *tokens.SessionTotals `json:"session,omitempty"`
-	Debug      *deepseek.DebugInfo
+	Reply            string
+	Provider         string
+	Model            string
+	DurationMs       int64
+	Tokens           *tokens.Usage         `json:"tokens,omitempty"`
+	Session          *tokens.SessionTotals `json:"session,omitempty"`
+	Compression      *CompressionInfo      `json:"compression,omitempty"`
+	SummarizeEvents  []SummarizeEvent      `json:"summarize_events,omitempty"`
+	Debug            *deepseek.DebugInfo
 }
 
 // ErrContextOverflow — prompt превышает лимит контекста.
@@ -77,6 +81,7 @@ type Agent struct {
 	backends     map[string]backend
 	order        []string
 	memory       *memory.Store
+	compression  CompressionConfig
 
 	contextLimit      int
 	forceContextLimit bool
@@ -99,12 +104,28 @@ func New(name string) *Agent {
 		defaultID:    "",
 		contextLimit: 1_000_000, // DeepSeek V4 Flash context window
 		pricing:      tokens.DefaultFlashPricing(),
+		compression:  defaultCompression(),
 	}
 }
 
 // WithBackend регистрирует LLM-бэкенд (deepseek, local, …).
 func (a *Agent) WithBackend(id, title, model string, llm LLM) *Agent {
 	return a.WithBackendLimit(id, title, model, llm, 0)
+}
+
+// CloneWithMemory копирует бэкенды/лимиты в нового агента с отдельной памятью и сессией.
+func (a *Agent) CloneWithMemory(name string, store *memory.Store) *Agent {
+	clone := New(name)
+	clone.systemPrompt = a.systemPrompt
+	clone.defaultID = a.defaultID
+	clone.backends = a.backends
+	clone.order = append([]string{}, a.order...)
+	clone.contextLimit = a.contextLimit
+	clone.forceContextLimit = a.forceContextLimit
+	clone.pricing = a.pricing
+	clone.compression = a.compression
+	clone.memory = store
+	return clone
 }
 
 // WithBackendLimit регистрирует бэкенд с собственным лимитом контекста.
@@ -149,6 +170,7 @@ func (a *Agent) Clone(name string) *Agent {
 	c.forceContextLimit = false
 	c.pricing = a.pricing
 	c.systemPrompt = a.systemPrompt
+	c.compression = a.compression
 	return c
 }
 
@@ -196,6 +218,14 @@ func (a *Agent) ClearHistory() error {
 		return nil
 	}
 	return a.memory.Clear()
+}
+
+// Summary — текущее сжатое содержание (может быть пустым).
+func (a *Agent) Summary() string {
+	if a.memory == nil {
+		return ""
+	}
+	return a.memory.Summary()
 }
 
 // SessionTotals — накопленные токены/стоимость с момента старта (или clear).
@@ -355,17 +385,34 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("agent %q: unknown provider %q", a.name, providerID)
 	}
 
-	messages := a.buildMessages(req)
+	compress := a.compression.Enabled
+	if req.Compress != nil {
+		compress = *req.Compress
+	}
+
+	var sumEvents []SummarizeEvent
+	if compress {
+		ev, err := a.maybeCompress(ctx, providerID)
+		if err != nil {
+			return Result{Provider: providerID, Model: b.model, SummarizeEvents: ev}, fmt.Errorf("agent %q: compress: %w", a.name, err)
+		}
+		sumEvents = append(sumEvents, ev...)
+	}
+
+	messages := a.buildMessagesCompressed(req, compress)
 	limit := a.ContextLimit(providerID)
 	usage := a.buildTokenUsage(messages, req.Message, b.model, nil, limit)
+	compInfo := a.ContextStats(providerID, compress)
 	session := a.SessionTotals()
 
 	if usage.OverLimit {
 		return Result{
-			Provider: providerID,
-			Model:    b.model,
-			Tokens:   &usage,
-			Session:  &session,
+			Provider:        providerID,
+			Model:           b.model,
+			Tokens:          &usage,
+			Session:         &session,
+			Compression:     &compInfo,
+			SummarizeEvents: sumEvents,
 		}, &ErrContextOverflow{Usage: usage}
 	}
 
@@ -375,12 +422,14 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		debug := chat.Debug
 		return Result{
-			Provider:   providerID,
-			Model:      b.model,
-			DurationMs: duration,
-			Tokens:     &usage,
-			Session:    &session,
-			Debug:      &debug,
+			Provider:        providerID,
+			Model:           b.model,
+			DurationMs:      duration,
+			Tokens:          &usage,
+			Session:         &session,
+			Compression:     &compInfo,
+			SummarizeEvents: sumEvents,
+			Debug:           &debug,
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
 
@@ -400,25 +449,37 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 			deepseek.Message{Role: "assistant", Content: chat.Reply},
 		); saveErr != nil {
 			return Result{
-				Reply:      chat.Reply,
-				Provider:   providerID,
-				Model:      b.model,
-				DurationMs: duration,
-				Tokens:     &usage,
-				Session:    &sess,
+				Reply:           chat.Reply,
+				Provider:        providerID,
+				Model:           b.model,
+				DurationMs:      duration,
+				Tokens:          &usage,
+				Session:         &sess,
+				Compression:     &compInfo,
+				SummarizeEvents: sumEvents,
 			}, fmt.Errorf("agent %q: save memory: %w", a.name, saveErr)
+		}
+		if compress {
+			ev, cErr := a.maybeCompress(ctx, providerID)
+			if cErr == nil && len(ev) > 0 {
+				sumEvents = append(sumEvents, ev...)
+			}
+			compInfo = a.ContextStats(providerID, compress)
+			sess = a.SessionTotals()
 		}
 	}
 
 	debug := chat.Debug
 	return Result{
-		Reply:      chat.Reply,
-		Provider:   providerID,
-		Model:      b.model,
-		DurationMs: duration,
-		Tokens:     &usage,
-		Session:    &sess,
-		Debug:      &debug,
+		Reply:           chat.Reply,
+		Provider:        providerID,
+		Model:           b.model,
+		DurationMs:      duration,
+		Tokens:          &usage,
+		Session:         &sess,
+		Compression:     &compInfo,
+		SummarizeEvents: sumEvents,
+		Debug:           &debug,
 	}, nil
 }
 
@@ -499,27 +560,9 @@ func (a *Agent) buildTokenUsage(messages []deepseek.Message, request, model stri
 }
 
 func (a *Agent) buildMessages(req Request) []deepseek.Message {
-	history := req.History
-	if a.memory != nil {
-		history = a.memory.Messages()
+	compress := a.compression.Enabled
+	if req.Compress != nil {
+		compress = *req.Compress
 	}
-
-	out := make([]deepseek.Message, 0, len(history)+2)
-	if a.systemPrompt != "" {
-		out = append(out, deepseek.Message{
-			Role:    "system",
-			Content: a.systemPrompt,
-		})
-	}
-	for _, m := range history {
-		if m.Role == "system" {
-			continue
-		}
-		out = append(out, m)
-	}
-	out = append(out, deepseek.Message{
-		Role:    "user",
-		Content: req.Message,
-	})
-	return out
+	return a.buildMessagesCompressed(req, compress)
 }

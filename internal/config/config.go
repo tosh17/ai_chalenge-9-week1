@@ -22,6 +22,10 @@ type Config struct {
 	ChatHistoryPath   string
 	ContextTokenLimit int // DeepSeek default context
 	LocalContextLimit int // Qwen / local context
+
+	CompressEnabled  bool
+	CompressKeepLast int
+	CompressEvery    int
 }
 
 func Load() (*Config, error) {
@@ -36,6 +40,9 @@ func Load() (*Config, error) {
 		ChatHistoryPath:   getEnv("CHAT_HISTORY_PATH", "data/chat-history.json"),
 		ContextTokenLimit: getEnvInt("CONTEXT_TOKEN_LIMIT", 1_000_000),
 		LocalContextLimit: getEnvInt("LOCAL_CONTEXT_LIMIT", 256_000),
+		CompressEnabled:   getEnvBool("COMPRESS_ENABLED", true),
+		CompressKeepLast:  getEnvInt("COMPRESS_KEEP_LAST", 6),
+		CompressEvery:     getEnvInt("COMPRESS_EVERY", 10),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
@@ -66,6 +73,14 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if v == "" {
+		return fallback
+	}
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 // NormalizeChatURL принимает .../v1 или .../v1/chat/completions.

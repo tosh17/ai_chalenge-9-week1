@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Springfield Chat Agent</title>
+  <title>Springfield Chat Agent — Day9 Dual</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
@@ -12,14 +12,14 @@
 <body>
   <div class="sky" aria-hidden="true"></div>
   <div class="layout" id="layout">
-    <div class="app comic-panel">
+    <div class="app comic-panel app--dual">
       <header class="header">
         <div class="header__brand">
           <img class="header__logo-img" src="/static/img/agent-logo.png" alt="" width="56" height="56">
           <div>
             <h1 class="header__title" id="appTitle">Springfield Agent</h1>
             <p class="header__subtitle">
-              Агент: <span class="header__model">day8-chat-agent</span>
+              Day9 · один ввод → два чата
               · <span id="providerLabel" class="header__model">Local-Qwen</span>
             </p>
           </div>
@@ -32,38 +32,60 @@
               <option value="deepseek">DeepSeek</option>
             </select>
           </label>
-          <button type="button" id="tokenDemoBtn" class="btn btn--ghost" title="Короткий, длинный и переполненный диалог">
-            Демо токенов
-          </button>
-          <button type="button" id="designBtn" class="btn btn--accent">
-            Рестайл
-          </button>
           <a class="btn btn--ghost" href="/chatAi" title="Диалог двух персонажей">ChatAI</a>
           <label class="debug-toggle" title="Показать панель отладки">
             <input type="checkbox" id="debugToggle">
             <span class="debug-toggle__track"></span>
             <span>Отладка</span>
           </label>
-          <button type="button" id="clearBtn" class="btn btn--ghost" title="Очистить диалог">
+          <button type="button" id="clearBtn" class="btn btn--ghost" title="Очистить оба диалога">
             Очистить
           </button>
         </div>
       </header>
 
-      <main class="chat" id="chat">
-        <div class="welcome" id="welcome">
-          <img class="welcome__donut" src="/static/img/agent-logo.png" alt="" width="96" height="96">
-          <h2 id="welcomeTitle">D’oh! Начни диалог</h2>
-          <p id="welcomeText">Токены считаются на каждый запрос, историю и ответ — смотри панель ниже.</p>
-        </div>
-      </main>
+      <div class="dual-panes">
+        <section class="pane pane--compress" aria-label="Чат со сжатием">
+          <header class="pane__header">
+            <h2 class="pane__title">Со сжатием</h2>
+            <p class="pane__hint" id="compressHint">старые реплики → summary</p>
+          </header>
+          <main class="chat" id="chatCompress">
+            <div class="welcome welcome--pane" id="welcomeCompress">
+              <h2>Со сжатием</h2>
+              <p>Когда накопится пачка сообщений — появится событие сжатия и учёт токенов суммаризации.</p>
+            </div>
+          </main>
+          <div class="pane__meter token-meter" aria-live="polite">
+            <div class="token-meter__bar"><span id="tokenBarCompress" class="token-meter__fill"></span></div>
+            <p class="token-meter__text" id="tokenTextCompress">токены: —</p>
+          </div>
+        </section>
+
+        <section class="pane pane--full" aria-label="Чат без сжатия">
+          <header class="pane__header">
+            <h2 class="pane__title">Без сжатия</h2>
+            <p class="pane__hint" id="fullHint">вся история в каждый запрос</p>
+          </header>
+          <main class="chat" id="chatFull">
+            <div class="welcome welcome--pane" id="welcomeFull">
+              <h2>Без сжатия</h2>
+              <p>Тот же ввод, полная история — сравни расход токенов слева и справа.</p>
+            </div>
+          </main>
+          <div class="pane__meter token-meter" aria-live="polite">
+            <div class="token-meter__bar"><span id="tokenBarFull" class="token-meter__fill"></span></div>
+            <p class="token-meter__text" id="tokenTextFull">токены: —</p>
+          </div>
+        </section>
+      </div>
 
       <footer class="composer">
         <form id="chatForm" class="composer__form">
           <textarea
             id="messageInput"
             class="composer__input"
-            placeholder="Напиши что-нибудь гениальное…"
+            placeholder="Один ввод уходит в оба чата…"
             rows="1"
             autofocus
           ></textarea>
@@ -73,11 +95,7 @@
             </svg>
           </button>
         </form>
-        <p class="composer__hint" id="appSubtitle">Enter — отправить</p>
-        <div class="token-meter" id="tokenMeter" aria-live="polite">
-          <div class="token-meter__bar"><span id="tokenBarFill" class="token-meter__fill"></span></div>
-          <p class="token-meter__text" id="tokenMeterText">токены: —</p>
-        </div>
+        <p class="composer__hint" id="appSubtitle">Enter — отправить в оба чата</p>
       </footer>
     </div>
 

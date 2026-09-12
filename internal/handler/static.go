@@ -40,11 +40,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.Health)
 	mux.HandleFunc("GET /api/providers", h.Providers)
 	mux.HandleFunc("GET /api/history", h.History)
+	mux.HandleFunc("GET /api/history/dual", h.HistoryDual)
 	mux.HandleFunc("DELETE /api/history", h.ClearHistory)
 	mux.HandleFunc("POST /api/chat", h.Chat)
+	mux.HandleFunc("POST /api/chat/dual", h.ChatDual)
 	mux.HandleFunc("POST /api/chat-ai", h.ChatAIRun)
-	mux.HandleFunc("POST /api/token-demo", h.TokenDemo)
-	mux.HandleFunc("POST /api/design", h.Design)
+	mux.HandleFunc("POST /api/compress-demo", h.CompressDemo)
+	mux.HandleFunc("GET /api/compression", h.CompressionGet)
+	mux.HandleFunc("POST /api/compression", h.CompressionSet)
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {

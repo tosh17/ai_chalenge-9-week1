@@ -1,7 +1,6 @@
 package memory_test
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -39,10 +38,48 @@ func TestPersistAcrossOpen(t *testing.T) {
 	if err := s2.Clear(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("file should still exist after clear: %v", err)
-	}
 	if s2.Len() != 0 {
 		t.Fatalf("want empty after clear, got %d", s2.Len())
+	}
+}
+
+func TestSummaryAndPending(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hist.json")
+	s, err := memory.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		_ = s.Append(
+			deepseek.Message{Role: "user", Content: "u"},
+			deepseek.Message{Role: "assistant", Content: "a"},
+		)
+	}
+	// 24 messages, keepLast=4 → pending = 20
+	pending := s.PendingForSummary(4)
+	if len(pending) != 20 {
+		t.Fatalf("pending want 20, got %d", len(pending))
+	}
+	if err := s.SetSummary("кратко", 10); err != nil {
+		t.Fatal(err)
+	}
+	if s.SummarizedUpTo() != 10 || s.Summary() != "кратко" {
+		t.Fatalf("summary not saved")
+	}
+	if len(s.RawTail()) != 14 {
+		t.Fatalf("raw tail want 14, got %d", len(s.RawTail()))
+	}
+	pending = s.PendingForSummary(4)
+	if len(pending) != 10 {
+		t.Fatalf("pending after summary want 10, got %d", len(pending))
+	}
+
+	s3, err := memory.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s3.Summary() != "кратко" || s3.SummarizedUpTo() != 10 {
+		t.Fatalf("summary not persisted")
 	}
 }

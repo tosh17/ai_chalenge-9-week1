@@ -11,15 +11,19 @@ import (
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 )
 
-// Store хранит messages на диске и в памяти.
+// Store хранит полную историю + отдельно summary сжатой части.
 type Store struct {
-	mu       sync.RWMutex
-	path     string
-	messages []deepseek.Message
+	mu             sync.RWMutex
+	path           string
+	messages       []deepseek.Message
+	summary        string
+	summarizedUpTo int // сколько первых сообщений уже вошло в summary
 }
 
 type filePayload struct {
-	Messages []deepseek.Message `json:"messages"`
+	Messages       []deepseek.Message `json:"messages"`
+	Summary        string             `json:"summary,omitempty"`
+	SummarizedUpTo int                `json:"summarized_up_to,omitempty"`
 }
 
 // Open загружает историю из JSON-файла (или создаёт пустое хранилище).
@@ -27,7 +31,7 @@ func Open(path string) (*Store, error) {
 	if path == "" {
 		return nil, fmt.Errorf("memory: path is required")
 	}
-	s := &Store{path: path, messages: nil}
+	s := &Store{path: path}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -38,19 +42,16 @@ func (s *Store) load() error {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			s.messages = nil
 			return nil
 		}
 		return fmt.Errorf("memory: read %s: %w", s.path, err)
 	}
 	if len(data) == 0 {
-		s.messages = nil
 		return nil
 	}
 
 	var payload filePayload
 	if err := json.Unmarshal(data, &payload); err != nil {
-		// совместимость: голый массив messages
 		var msgs []deepseek.Message
 		if err2 := json.Unmarshal(data, &msgs); err2 != nil {
 			return fmt.Errorf("memory: parse %s: %w", s.path, err)
@@ -59,6 +60,14 @@ func (s *Store) load() error {
 	}
 
 	s.messages = filterDialog(payload.Messages)
+	s.summary = payload.Summary
+	s.summarizedUpTo = payload.SummarizedUpTo
+	if s.summarizedUpTo < 0 {
+		s.summarizedUpTo = 0
+	}
+	if s.summarizedUpTo > len(s.messages) {
+		s.summarizedUpTo = len(s.messages)
+	}
 	return nil
 }
 
@@ -76,7 +85,7 @@ func filterDialog(in []deepseek.Message) []deepseek.Message {
 	return out
 }
 
-// Messages возвращает копию текущей истории.
+// Messages возвращает копию полной истории (для UI).
 func (s *Store) Messages() []deepseek.Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -97,6 +106,64 @@ func (s *Store) Path() string {
 	return s.path
 }
 
+// Summary — текущее сжатое содержание старой части диалога.
+func (s *Store) Summary() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.summary
+}
+
+// SummarizedUpTo — сколько первых сообщений покрыто summary.
+func (s *Store) SummarizedUpTo() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.summarizedUpTo
+}
+
+// SetSummary сохраняет summary и границу сжатия.
+func (s *Store) SetSummary(summary string, upTo int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if upTo < 0 {
+		upTo = 0
+	}
+	if upTo > len(s.messages) {
+		upTo = len(s.messages)
+	}
+	s.summary = summary
+	s.summarizedUpTo = upTo
+	return s.persistLocked()
+}
+
+// RawTail возвращает сообщения, ещё не вошедшие в summary (для LLM-запроса).
+func (s *Store) RawTail() []deepseek.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.summarizedUpTo >= len(s.messages) {
+		return nil
+	}
+	out := make([]deepseek.Message, len(s.messages)-s.summarizedUpTo)
+	copy(out, s.messages[s.summarizedUpTo:])
+	return out
+}
+
+// PendingForSummary — сообщения после summarizedUpTo, кроме последних keepLast.
+// Их можно сжимать пачками.
+func (s *Store) PendingForSummary(keepLast int) []deepseek.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if keepLast < 0 {
+		keepLast = 0
+	}
+	end := len(s.messages) - keepLast
+	if end <= s.summarizedUpTo {
+		return nil
+	}
+	out := make([]deepseek.Message, end-s.summarizedUpTo)
+	copy(out, s.messages[s.summarizedUpTo:end])
+	return out
+}
+
 // Append добавляет сообщения и сразу пишет файл.
 func (s *Store) Append(msgs ...deepseek.Message) error {
 	clean := filterDialog(msgs)
@@ -110,11 +177,13 @@ func (s *Store) Append(msgs ...deepseek.Message) error {
 	return s.persistLocked()
 }
 
-// Clear очищает историю на диске и в памяти.
+// Clear очищает историю и summary.
 func (s *Store) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.messages = nil
+	s.summary = ""
+	s.summarizedUpTo = 0
 	return s.persistLocked()
 }
 
@@ -123,7 +192,11 @@ func (s *Store) persistLocked() error {
 		return fmt.Errorf("memory: mkdir: %w", err)
 	}
 
-	payload := filePayload{Messages: s.messages}
+	payload := filePayload{
+		Messages:       s.messages,
+		Summary:        s.summary,
+		SummarizedUpTo: s.summarizedUpTo,
+	}
 	if payload.Messages == nil {
 		payload.Messages = []deepseek.Message{}
 	}

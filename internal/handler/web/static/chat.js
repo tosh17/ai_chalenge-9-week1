@@ -1,11 +1,7 @@
-const chatEl = document.getElementById("chat");
-const welcomeEl = document.getElementById("welcome");
 const formEl = document.getElementById("chatForm");
 const inputEl = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
 const clearBtn = document.getElementById("clearBtn");
-const designBtn = document.getElementById("designBtn");
-const tokenDemoBtn = document.getElementById("tokenDemoBtn");
 const layoutEl = document.getElementById("layout");
 const debugToggle = document.getElementById("debugToggle");
 const debugPanel = document.getElementById("debugPanel");
@@ -13,33 +9,44 @@ const debugLog = document.getElementById("debugLog");
 const clearDebugBtn = document.getElementById("clearDebugBtn");
 const providerSelect = document.getElementById("providerSelect");
 const providerLabel = document.getElementById("providerLabel");
-const appTitle = document.getElementById("appTitle");
-const welcomeTitle = document.getElementById("welcomeTitle");
-const welcomeText = document.getElementById("welcomeText");
 const appSubtitle = document.getElementById("appSubtitle");
+const compressHint = document.getElementById("compressHint");
+const fullHint = document.getElementById("fullHint");
 
-const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day8";
-const PROVIDER_STORAGE_KEY = "day8-chat-provider";
-const tokenMeterText = document.getElementById("tokenMeterText");
-const tokenBarFill = document.getElementById("tokenBarFill");
+const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day9";
+const PROVIDER_STORAGE_KEY = "day9-chat-provider";
 
-/** @type {{role: string, content: string}[]} */
-let history = [];
+const panes = {
+  compress: {
+    chat: document.getElementById("chatCompress"),
+    welcome: document.getElementById("welcomeCompress"),
+    bar: document.getElementById("tokenBarCompress"),
+    text: document.getElementById("tokenTextCompress"),
+    hint: compressHint,
+    typingId: "typingCompress",
+  },
+  full: {
+    chat: document.getElementById("chatFull"),
+    welcome: document.getElementById("welcomeFull"),
+    bar: document.getElementById("tokenBarFull"),
+    text: document.getElementById("tokenTextFull"),
+    hint: fullHint,
+    typingId: "typingFull",
+  },
+};
+
 let isLoading = false;
 let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
-/** @type {{id: string, title: string, model: string}[]} */
+/** @type {{id: string, title: string, model: string, context_limit?: number}[]} */
 let providers = [];
 
-const DEFAULT_DESIGN_WISH =
-  "Сделай веб-чат в ярком мультяшном стиле американского ситкома 90-х: жёлтый, голубое небо, толстые чёрные контуры, комикс, весело и дерзко, без копирования чужих персонажей.";
-
-function hideWelcome() {
-  if (welcomeEl) welcomeEl.style.display = "none";
+function hideWelcome(pane) {
+  if (pane.welcome) pane.welcome.style.display = "none";
 }
 
-function scrollToBottom() {
-  chatEl.scrollTop = chatEl.scrollHeight;
+function scrollPane(pane) {
+  pane.chat.scrollTop = pane.chat.scrollHeight;
 }
 
 function formatDuration(ms) {
@@ -48,35 +55,45 @@ function formatDuration(ms) {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-function createMessage(role, content, extraClass = "", meta = {}) {
-  hideWelcome();
+function escapeHTML(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function createMessage(pane, role, content, extraClass = "", meta = {}) {
+  hideWelcome(pane);
 
   const isUser = role === "user";
+  const isSystem = role === "system";
   const el = document.createElement("div");
   el.className = `message message--${role} ${extraClass}`.trim();
 
-  const timeLabel = !isUser && meta.durationMs != null
+  let avatar = "AI";
+  if (isUser) avatar = "Вы";
+  if (isSystem) avatar = "∑";
+
+  const timeLabel = !isUser && !isSystem && meta.durationMs != null
     ? `<span class="message__time" title="время ответа">${escapeHTML(formatDuration(meta.durationMs))}</span>`
     : "";
 
   el.innerHTML = `
-    <div class="message__avatar">${isUser ? "Вы" : "AI"}</div>
+    <div class="message__avatar">${avatar}</div>
     <div class="message__body">
       <div class="message__bubble">${escapeHTML(content)}</div>
       ${timeLabel}
     </div>
   `;
-  chatEl.appendChild(el);
-  scrollToBottom();
+  pane.chat.appendChild(el);
+  scrollPane(pane);
   return el;
 }
 
-function createTypingIndicator() {
-  hideWelcome();
-
+function createTypingIndicator(pane) {
+  hideWelcome(pane);
   const el = document.createElement("div");
   el.className = "message message--assistant message--typing";
-  el.id = "typingIndicator";
+  el.id = pane.typingId;
   el.innerHTML = `
     <div class="message__avatar">AI</div>
     <div class="message__body">
@@ -87,19 +104,13 @@ function createTypingIndicator() {
       </div>
     </div>
   `;
-  chatEl.appendChild(el);
-  scrollToBottom();
+  pane.chat.appendChild(el);
+  scrollPane(pane);
   return el;
 }
 
-function removeTypingIndicator() {
-  document.getElementById("typingIndicator")?.remove();
-}
-
-function escapeHTML(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
+function removeTypingIndicator(pane) {
+  document.getElementById(pane.typingId)?.remove();
 }
 
 function setLoading(loading) {
@@ -107,8 +118,6 @@ function setLoading(loading) {
   sendBtn.disabled = loading;
   inputEl.disabled = loading;
   providerSelect.disabled = loading;
-  designBtn.disabled = loading;
-  if (tokenDemoBtn) tokenDemoBtn.disabled = loading;
 }
 
 function autoResizeTextarea() {
@@ -149,7 +158,7 @@ function appendDebugBlock(title, payload, extraClass = "") {
   `;
 }
 
-function logExchange({ requestBody, status, responseBody, durationMs, upstream, url = "/api/chat" }) {
+function logExchange({ requestBody, status, responseBody, durationMs, url = "/api/chat/dual" }) {
   if (!debugEnabled) return;
 
   if (debugEntryCount === 0) {
@@ -166,15 +175,9 @@ function logExchange({ requestBody, status, responseBody, durationMs, upstream, 
       <span class="debug-entry__status debug-entry__status--${status >= 200 && status < 300 ? "ok" : "err"}">${status}</span>
       <span class="debug-entry__duration">${durationMs} ms</span>
     </header>
-    ${appendDebugBlock(`→ ${url}`, {
-      method: "POST",
-      url,
-      body: requestBody,
-    })}
+    ${appendDebugBlock(`→ ${url}`, { method: "POST", url, body: requestBody })}
     ${appendDebugBlock("← ответ", responseBody, status >= 400 ? "debug-block__code--error" : "")}
-    ${upstream ? appendDebugBlock("↔ upstream", upstream) : ""}
   `;
-
   debugLog.prepend(entry);
 }
 
@@ -222,46 +225,118 @@ function formatCost(v) {
   return `$${v.toFixed(4)}`;
 }
 
-function updateTokenMeter(tokens, session) {
-  if (!tokenMeterText || !tokenBarFill) return;
-  if (!tokens) {
-    tokenMeterText.textContent = "токены: —";
-    tokenBarFill.style.width = "0%";
-    tokenBarFill.className = "token-meter__fill";
+function updateTokenMeter(pane, tokens, session) {
+  if (!pane.text || !pane.bar) return;
+  if (!tokens && !session) {
+    pane.text.textContent = "токены: —";
+    pane.bar.style.width = "0%";
+    pane.bar.className = "token-meter__fill";
     return;
   }
 
-  const pct = Math.min(100, Math.max(0, tokens.context_pct || 0));
-  tokenBarFill.style.width = `${pct}%`;
-  tokenBarFill.className = "token-meter__fill";
-  if (pct >= 90 || tokens.over_limit) tokenBarFill.classList.add("token-meter__fill--danger");
-  else if (pct >= 60) tokenBarFill.classList.add("token-meter__fill--warn");
+  const pct = Math.min(100, Math.max(0, (tokens && tokens.context_pct) || 0));
+  pane.bar.style.width = `${pct}%`;
+  pane.bar.className = "token-meter__fill";
+  if (tokens && (pct >= 90 || tokens.over_limit)) pane.bar.classList.add("token-meter__fill--danger");
+  else if (pct >= 60) pane.bar.classList.add("token-meter__fill--warn");
 
+  const last = tokens
+    ? `последний: ${tokens.total || tokens.prompt || 0} tok · prompt ${tokens.prompt || 0}/${tokens.context_limit || "?"} (${pct.toFixed(1)}%) · ${formatCost(tokens.cost_usd)}`
+    : "последний: —";
   const sess = session
-    ? ` · сессия: ${session.total_tokens || 0} tok / ${formatCost(session.estimated_cost_usd)}`
-    : "";
-  tokenMeterText.textContent =
-    `запрос ${tokens.request || 0} · история ${tokens.history || 0} · ответ ${tokens.completion || 0}` +
-    ` · prompt ${tokens.prompt || 0}/${tokens.context_limit || "?"} (${pct.toFixed(1)}%)` +
-    ` · ${formatCost(tokens.cost_usd)}${sess}`;
+    ? `сессия: ${session.total_tokens || 0} tok / ${formatCost(session.estimated_cost_usd)}`
+    : "сессия: —";
+  pane.text.textContent = `${last} · ${sess}`;
+}
+
+function updatePaneHint(paneKey, compression) {
+  const pane = panes[paneKey];
+  if (!pane.hint || !compression) return;
+  if (paneKey === "full" || !compression.enabled) {
+    pane.hint.textContent = `вся история · ${compression.full_history_messages || 0} сообщ. · ≈${compression.full_history_tokens || 0} tok`;
+    return;
+  }
+  const saved = compression.tokens_saved_estimate || 0;
+  pane.hint.textContent =
+    `summary ${compression.summarized_messages || 0} · сырых ${compression.raw_messages_in_prompt || 0}` +
+    (saved > 0 ? ` · экономия ≈ ${saved} tok` : "");
+}
+
+function renderSummarizeEvents(pane, events) {
+  if (!Array.isArray(events) || !events.length) return;
+  for (const ev of events) {
+    const tok = ev.total_tokens || (ev.prompt_tokens || 0) + (ev.completion_tokens || 0);
+    const cost = formatCost(ev.cost_usd);
+    const n = ev.messages_compressed || 0;
+    let text =
+      `Произошло сжатие: ${n} сообщений свёрнуты в summary. ` +
+      `На операцию израсходовано ${tok} ток. (${cost})`;
+    if (ev.summary_preview) {
+      text += `\nПревью: ${ev.summary_preview}`;
+    }
+    createMessage(pane, "system", text, "message--system");
+  }
+}
+
+function renderPaneResult(paneKey, side, clientDurationMs) {
+  const pane = panes[paneKey];
+  removeTypingIndicator(pane);
+
+  if (side.error && !side.reply) {
+    createMessage(pane, "assistant", side.error, "message--error", {
+      durationMs: side.duration_ms ?? clientDurationMs,
+    });
+  } else if (side.reply) {
+    createMessage(pane, "assistant", side.reply, side.error ? "message--error" : "", {
+      durationMs: side.duration_ms ?? clientDurationMs,
+    });
+  }
+
+  renderSummarizeEvents(pane, side.summarize_events);
+  updateTokenMeter(pane, side.tokens, side.session);
+  updatePaneHint(paneKey, side.compression);
+}
+
+function resetPaneUI(pane) {
+  pane.chat.innerHTML = "";
+  if (pane.welcome) {
+    pane.welcome.style.display = "";
+    pane.chat.appendChild(pane.welcome);
+  }
+  updateTokenMeter(pane, null, null);
 }
 
 async function loadHistory() {
   try {
-    const res = await fetch("/api/history");
+    const res = await fetch("/api/history/dual");
     if (!res.ok) return;
     const data = await res.json();
-    const messages = Array.isArray(data.messages) ? data.messages : [];
-    history = messages
-      .filter((m) => m && (m.role === "user" || m.role === "assistant") && m.content)
-      .map((m) => ({ role: m.role, content: m.content }));
 
-    updateTokenMeter(data.tokens, data.session);
-
-    if (!history.length) return;
-
-    for (const m of history) {
-      createMessage(m.role, m.content);
+    for (const key of ["compress", "full"]) {
+      const side = data[key] || {};
+      const pane = panes[key];
+      const messages = Array.isArray(side.messages) ? side.messages : [];
+      updateTokenMeter(pane, side.tokens, side.session);
+      updatePaneHint(key, {
+        enabled: key === "compress",
+        ...(side.compression || {}),
+        full_history_messages: messages.length,
+      });
+      if (!messages.length) continue;
+      for (const m of messages) {
+        if (!m || !m.content) continue;
+        if (m.role === "user" || m.role === "assistant") {
+          createMessage(pane, m.role, m.content);
+        }
+      }
+      if (key === "compress" && side.summary) {
+        createMessage(
+          pane,
+          "system",
+          `Текущий summary (${side.compression?.summarize_every ? "политика сжатия активна" : "сохранён"}):\n${side.summary}`,
+          "message--system",
+        );
+      }
     }
   } catch {
     /* keep empty */
@@ -281,144 +356,14 @@ async function loadProviders() {
   }
 }
 
-function applyTheme(cssVars, design) {
-  const root = document.documentElement;
-  if (cssVars && typeof cssVars === "object") {
-    for (const [key, value] of Object.entries(cssVars)) {
-      if (value) root.style.setProperty(key, value);
-    }
-  }
-  if (design?.title) appTitle.textContent = design.title;
-  if (design?.welcome_title) welcomeTitle.textContent = design.welcome_title;
-  if (design?.welcome_text) welcomeText.textContent = design.welcome_text;
-  if (design?.subtitle) appSubtitle.textContent = design.subtitle;
-}
-
-async function runTokenDemo() {
-  setLoading(true);
-  createMessage("user", "Покажи на трёх примерах, как растут токены и что бывает при переполнении");
-  createTypingIndicator();
-  const requestBody = { provider: currentProvider(), limit: 4096 };
-  const started = performance.now();
-
-  try {
-    const res = await fetch("/api/token-demo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    });
-    const data = await res.json();
-    const durationMs = Math.round(performance.now() - started);
-    removeTypingIndicator();
-
-    logExchange({
-      url: "/api/token-demo",
-      requestBody,
-      status: res.status,
-      responseBody: data,
-      durationMs,
-    });
-
-    if (!res.ok) {
-      createMessage("assistant", data.error || "Демо токенов упало", "message--error", { durationMs });
-      return;
-    }
-
-    const table = data.table || JSON.stringify(data.rows || [], null, 2);
-    createMessage("assistant", table, "message--mono", { durationMs });
-
-    // покажем последнюю успешную/overflow строку на meter
-    const rows = Array.isArray(data.rows) ? data.rows : [];
-    const last = [...rows].reverse().find((r) => r) || null;
-    if (last) {
-      updateTokenMeter(
-        {
-          request: last.request_tokens,
-          history: last.history_tokens,
-          completion: last.completion_tokens,
-          prompt: last.prompt_tokens,
-          total: last.total_tokens,
-          context_limit: data.demo_limit,
-          context_pct: last.context_pct,
-          over_limit: last.over_limit,
-          cost_usd: last.cost_usd,
-        },
-        {
-          total_tokens: rows.reduce((s, r) => s + (r.total_tokens || 0), 0),
-          estimated_cost_usd: rows.reduce((s, r) => s + (r.cost_usd || 0), 0),
-        }
-      );
-    }
-  } catch (err) {
-    removeTypingIndicator();
-    createMessage("assistant", "Не удалось запустить демо токенов.", "message--error");
-  } finally {
-    setLoading(false);
-    inputEl.focus();
-  }
-}
-
-async function runDesignCrew() {
-  const wish = window.prompt("Что хотят агенты-дизайнеры?", DEFAULT_DESIGN_WISH);
-  if (wish === null) return;
-
-  setLoading(true);
-  const requestBody = { wish: wish.trim() || DEFAULT_DESIGN_WISH, provider: currentProvider() };
-  const started = performance.now();
-
-  try {
-    const res = await fetch("/api/design", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    });
-    const data = await res.json();
-    const durationMs = Math.round(performance.now() - started);
-
-    logExchange({
-      url: "/api/design",
-      requestBody,
-      status: res.status,
-      responseBody: data,
-      durationMs,
-    });
-
-    if (!res.ok) {
-      createMessage("assistant", data.error || "Дизайн-команда упала", "message--error");
-      return;
-    }
-
-    applyTheme(data.css_vars, data.design);
-
-    const steps = (data.steps || [])
-      .map((s, i) => `${i + 1}. ${s.agent}`)
-      .join(" → ");
-    createMessage(
-      "assistant",
-      `Готово!\nЦепочка: ${steps}\nТема: ${data.design?.theme_name || "без имени"}\n\nПромпт:\n${data.prompt || ""}`
-    );
-  } catch (err) {
-    createMessage("assistant", "Не удалось связаться с дизайн-командой.", "message--error");
-    logExchange({
-      url: "/api/design",
-      requestBody,
-      status: 0,
-      responseBody: { error: String(err) },
-      durationMs: Math.round(performance.now() - started),
-    });
-  } finally {
-    setLoading(false);
-    inputEl.focus();
-  }
-}
-
 async function sendMessage(text) {
-  createMessage("user", text);
+  createMessage(panes.compress, "user", text);
+  createMessage(panes.full, "user", text);
 
   setLoading(true);
-  createTypingIndicator();
+  createTypingIndicator(panes.compress);
+  createTypingIndicator(panes.full);
 
-  // История на сервере: агент сам подставляет сохранённый контекст.
   const requestBody = {
     message: text,
     provider: currentProvider(),
@@ -429,7 +374,7 @@ async function sendMessage(text) {
     const headers = { "Content-Type": "application/json" };
     if (debugEnabled) headers["X-Debug"] = "true";
 
-    const res = await fetch("/api/chat", {
+    const res = await fetch("/api/chat/dual", {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
@@ -438,43 +383,28 @@ async function sendMessage(text) {
     const data = await res.json();
     const durationMs = Math.round(performance.now() - started);
 
-    removeTypingIndicator();
+    logExchange({ requestBody, status: res.status, responseBody: data, durationMs });
 
-    logExchange({
-      requestBody,
-      status: res.status,
-      responseBody: data,
-      durationMs,
-      upstream: data.debug || null,
-    });
+    renderPaneResult("compress", data.compress || { error: data.error || "нет ответа" }, durationMs);
+    renderPaneResult("full", data.full || { error: data.error || "нет ответа" }, durationMs);
 
-    if (!res.ok) {
-      updateTokenMeter(data.tokens, data.session);
-      createMessage("assistant", data.error || "Неизвестная ошибка", "message--error", {
-        durationMs: data.duration_ms ?? durationMs,
-      });
-      return;
+    if (appSubtitle) {
+      const c = data.compress?.session?.total_tokens ?? "—";
+      const f = data.full?.session?.total_tokens ?? "—";
+      appSubtitle.textContent = `сессия: сжатие ${c} tok · без сжатия ${f} tok · Enter — отправить`;
     }
-
-    createMessage("assistant", data.reply, "", {
-      durationMs: data.duration_ms ?? durationMs,
-    });
-    history.push({ role: "user", content: text });
-    history.push({ role: "assistant", content: data.reply });
-    updateTokenMeter(data.tokens, data.session);
   } catch (err) {
-    removeTypingIndicator();
+    removeTypingIndicator(panes.compress);
+    removeTypingIndicator(panes.full);
     const durationMs = Math.round(performance.now() - started);
-
     logExchange({
       requestBody,
       status: 0,
       responseBody: { error: "Не удалось связаться с сервером", details: String(err) },
       durationMs,
-      upstream: null,
     });
-
-    createMessage("assistant", "Не удалось связаться с сервером.", "message--error");
+    createMessage(panes.compress, "assistant", "Не удалось связаться с сервером.", "message--error");
+    createMessage(panes.full, "assistant", "Не удалось связаться с сервером.", "message--error");
   } finally {
     setLoading(false);
     inputEl.focus();
@@ -485,7 +415,6 @@ formEl.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = inputEl.value.trim();
   if (!text || isLoading) return;
-
   inputEl.value = "";
   autoResizeTextarea();
   sendMessage(text);
@@ -506,22 +435,10 @@ clearBtn.addEventListener("click", async () => {
   } catch {
     /* still clear UI */
   }
-  history = [];
-  chatEl.innerHTML = "";
-  if (welcomeEl) {
-    welcomeEl.style.display = "";
-    chatEl.appendChild(welcomeEl);
-  }
-  updateTokenMeter(null, null);
+  resetPaneUI(panes.compress);
+  resetPaneUI(panes.full);
+  if (appSubtitle) appSubtitle.textContent = "Enter — отправить в оба чата";
   inputEl.focus();
-});
-
-designBtn.addEventListener("click", () => {
-  if (!isLoading) runDesignCrew();
-});
-
-tokenDemoBtn?.addEventListener("click", () => {
-  if (!isLoading) runTokenDemo();
 });
 
 providerSelect.addEventListener("change", () => {
