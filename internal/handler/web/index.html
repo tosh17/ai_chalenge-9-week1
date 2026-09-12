@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Springfield Chat Agent — Day9 Dual</title>
+  <title>Springfield Agent — Day10 Strategies</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
@@ -12,15 +12,16 @@
 <body>
   <div class="sky" aria-hidden="true"></div>
   <div class="layout" id="layout">
-    <div class="app comic-panel app--dual">
+    <div class="app comic-panel">
       <header class="header">
         <div class="header__brand">
           <img class="header__logo-img" src="/static/img/agent-logo.png" alt="" width="56" height="56">
           <div>
-            <h1 class="header__title" id="appTitle">Springfield Agent</h1>
+            <h1 class="header__title">Springfield Agent</h1>
             <p class="header__subtitle">
-              Day9 · один ввод → два чата
+              Day10 · стратегии контекста
               · <span id="providerLabel" class="header__model">Local-Qwen</span>
+              · <span id="strategyLabel" class="header__model">sliding</span>
             </p>
           </div>
         </div>
@@ -32,72 +33,83 @@
               <option value="deepseek">DeepSeek</option>
             </select>
           </label>
-          <a class="btn btn--ghost" href="/chatAi" title="Диалог двух персонажей">ChatAI</a>
+          <button type="button" id="settingsBtn" class="btn btn--ghost" title="Стратегии и параметры">Настройки</button>
+          <button type="button" id="compareBtn" class="btn btn--ghost" title="Прогнать сценарий ТЗ на 3 стратегиях">Сравнить</button>
+          <a class="btn btn--ghost" href="/chatAi">ChatAI</a>
           <label class="debug-toggle" title="Показать панель отладки">
             <input type="checkbox" id="debugToggle">
             <span class="debug-toggle__track"></span>
             <span>Отладка</span>
           </label>
-          <button type="button" id="clearBtn" class="btn btn--ghost" title="Очистить оба диалога">
-            Очистить
-          </button>
+          <button type="button" id="clearBtn" class="btn btn--ghost">Очистить</button>
         </div>
       </header>
 
-      <div class="dual-panes">
-        <section class="pane pane--compress" aria-label="Чат со сжатием">
-          <header class="pane__header">
-            <h2 class="pane__title">Со сжатием</h2>
-            <p class="pane__hint" id="compressHint">старые реплики → summary</p>
-          </header>
-          <main class="chat" id="chatCompress">
-            <div class="welcome welcome--pane" id="welcomeCompress">
-              <h2>Со сжатием</h2>
-              <p>Когда накопится пачка сообщений — появится событие сжатия и учёт токенов суммаризации.</p>
-            </div>
-          </main>
-          <div class="pane__meter token-meter" aria-live="polite">
-            <div class="token-meter__bar"><span id="tokenBarCompress" class="token-meter__fill"></span></div>
-            <p class="token-meter__text" id="tokenTextCompress">токены: —</p>
-          </div>
-        </section>
+      <main class="chat" id="chat">
+        <div class="welcome" id="welcome">
+          <img class="welcome__donut" src="/static/img/agent-logo.png" alt="" width="96" height="96">
+          <h2>Стратегии контекста</h2>
+          <p>Выбери в настройках Sliding / Facts / Branching, настрой N и сравни на сценарии «собираем ТЗ».</p>
+        </div>
+      </main>
 
-        <section class="pane pane--full" aria-label="Чат без сжатия">
-          <header class="pane__header">
-            <h2 class="pane__title">Без сжатия</h2>
-            <p class="pane__hint" id="fullHint">вся история в каждый запрос</p>
-          </header>
-          <main class="chat" id="chatFull">
-            <div class="welcome welcome--pane" id="welcomeFull">
-              <h2>Без сжатия</h2>
-              <p>Тот же ввод, полная история — сравни расход токенов слева и справа.</p>
-            </div>
-          </main>
-          <div class="pane__meter token-meter" aria-live="polite">
-            <div class="token-meter__bar"><span id="tokenBarFull" class="token-meter__fill"></span></div>
-            <p class="token-meter__text" id="tokenTextFull">токены: —</p>
-          </div>
-        </section>
+      <div class="branch-bar" id="branchBar" hidden>
+        <span class="branch-bar__label">Ветки:</span>
+        <div class="branch-bar__list" id="branchList"></div>
+        <button type="button" id="forkBtn" class="btn btn--ghost btn--sm">Checkpoint → 2 ветки</button>
       </div>
 
       <footer class="composer">
         <form id="chatForm" class="composer__form">
-          <textarea
-            id="messageInput"
-            class="composer__input"
-            placeholder="Один ввод уходит в оба чата…"
-            rows="1"
-            autofocus
-          ></textarea>
+          <textarea id="messageInput" class="composer__input" placeholder="Пиши сообщение…" rows="1" autofocus></textarea>
           <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
             </svg>
           </button>
         </form>
-        <p class="composer__hint" id="appSubtitle">Enter — отправить в оба чата</p>
+        <p class="composer__hint" id="appSubtitle">Enter — отправить</p>
+        <div class="token-meter" id="tokenMeter" aria-live="polite">
+          <div class="token-meter__bar"><span id="tokenBarFill" class="token-meter__fill"></span></div>
+          <p class="token-meter__text" id="tokenMeterText">токены: —</p>
+        </div>
       </footer>
     </div>
+
+    <aside class="settings-panel" id="settingsPanel" aria-hidden="true">
+      <div class="settings-panel__header">
+        <h2 class="settings-panel__title">Настройки контекста</h2>
+        <button type="button" id="settingsCloseBtn" class="btn btn--ghost btn--sm">Закрыть</button>
+      </div>
+      <div class="settings-panel__body">
+        <fieldset class="settings-fieldset">
+          <legend>Стратегия</legend>
+          <label class="settings-radio"><input type="radio" name="strategyKind" value="sliding"> Sliding Window</label>
+          <label class="settings-radio"><input type="radio" name="strategyKind" value="facts"> Sticky Facts</label>
+          <label class="settings-radio"><input type="radio" name="strategyKind" value="branch"> Branching</label>
+        </fieldset>
+
+        <label class="settings-field" id="fieldSliding">
+          <span>Sliding: последние N сообщений</span>
+          <input type="number" id="slidingN" min="2" max="100" value="8">
+        </label>
+        <label class="settings-field" id="fieldFacts">
+          <span>Facts: последние N + блок facts</span>
+          <input type="number" id="factsN" min="2" max="100" value="6">
+        </label>
+        <label class="settings-field" id="fieldBranch">
+          <span>Branch: окно N (0 = вся ветка)</span>
+          <input type="number" id="branchN" min="0" max="200" value="0">
+        </label>
+
+        <button type="button" id="saveStrategyBtn" class="btn btn--primary settings-save">Сохранить</button>
+
+        <div class="facts-box" id="factsBox">
+          <h3>Текущие facts</h3>
+          <pre id="factsPre" class="facts-box__pre">—</pre>
+        </div>
+      </div>
+    </aside>
 
     <aside class="debug-panel" id="debugPanel" aria-hidden="true">
       <div class="debug-panel__header">
@@ -105,7 +117,7 @@
         <button type="button" id="clearDebugBtn" class="btn btn--ghost btn--sm">Очистить лог</button>
       </div>
       <div class="debug-panel__body" id="debugLog">
-        <p class="debug-panel__empty">Запросы и шаги агентов появятся здесь.</p>
+        <p class="debug-panel__empty">Запросы появятся здесь.</p>
       </div>
     </aside>
   </div>

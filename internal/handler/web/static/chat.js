@@ -1,3 +1,5 @@
+const chatEl = document.getElementById("chat");
+const welcomeEl = document.getElementById("welcome");
 const formEl = document.getElementById("chatForm");
 const inputEl = document.getElementById("messageInput");
 const sendBtn = document.getElementById("sendBtn");
@@ -9,44 +11,41 @@ const debugLog = document.getElementById("debugLog");
 const clearDebugBtn = document.getElementById("clearDebugBtn");
 const providerSelect = document.getElementById("providerSelect");
 const providerLabel = document.getElementById("providerLabel");
+const strategyLabel = document.getElementById("strategyLabel");
 const appSubtitle = document.getElementById("appSubtitle");
-const compressHint = document.getElementById("compressHint");
-const fullHint = document.getElementById("fullHint");
+const tokenMeterText = document.getElementById("tokenMeterText");
+const tokenBarFill = document.getElementById("tokenBarFill");
+const settingsBtn = document.getElementById("settingsBtn");
+const settingsPanel = document.getElementById("settingsPanel");
+const settingsCloseBtn = document.getElementById("settingsCloseBtn");
+const saveStrategyBtn = document.getElementById("saveStrategyBtn");
+const compareBtn = document.getElementById("compareBtn");
+const slidingN = document.getElementById("slidingN");
+const factsN = document.getElementById("factsN");
+const branchN = document.getElementById("branchN");
+const factsPre = document.getElementById("factsPre");
+const branchBar = document.getElementById("branchBar");
+const branchList = document.getElementById("branchList");
+const forkBtn = document.getElementById("forkBtn");
 
-const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day9";
-const PROVIDER_STORAGE_KEY = "day9-chat-provider";
+const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day10";
+const PROVIDER_STORAGE_KEY = "day10-chat-provider";
 
-const panes = {
-  compress: {
-    chat: document.getElementById("chatCompress"),
-    welcome: document.getElementById("welcomeCompress"),
-    bar: document.getElementById("tokenBarCompress"),
-    text: document.getElementById("tokenTextCompress"),
-    hint: compressHint,
-    typingId: "typingCompress",
-  },
-  full: {
-    chat: document.getElementById("chatFull"),
-    welcome: document.getElementById("welcomeFull"),
-    bar: document.getElementById("tokenBarFull"),
-    text: document.getElementById("tokenTextFull"),
-    hint: fullHint,
-    typingId: "typingFull",
-  },
-};
-
+/** @type {{role: string, content: string}[]} */
+let history = [];
 let isLoading = false;
 let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {{id: string, title: string, model: string, context_limit?: number}[]} */
 let providers = [];
+let currentStrategy = { kind: "sliding", sliding_window_n: 8, facts_window_n: 6, branch_window_n: 0 };
 
-function hideWelcome(pane) {
-  if (pane.welcome) pane.welcome.style.display = "none";
+function hideWelcome() {
+  if (welcomeEl) welcomeEl.style.display = "none";
 }
 
-function scrollPane(pane) {
-  pane.chat.scrollTop = pane.chat.scrollHeight;
+function scrollToBottom() {
+  chatEl.scrollTop = chatEl.scrollHeight;
 }
 
 function formatDuration(ms) {
@@ -61,22 +60,18 @@ function escapeHTML(text) {
   return div.innerHTML;
 }
 
-function createMessage(pane, role, content, extraClass = "", meta = {}) {
-  hideWelcome(pane);
-
+function createMessage(role, content, extraClass = "", meta = {}) {
+  hideWelcome();
   const isUser = role === "user";
   const isSystem = role === "system";
   const el = document.createElement("div");
   el.className = `message message--${role} ${extraClass}`.trim();
-
   let avatar = "AI";
   if (isUser) avatar = "Вы";
-  if (isSystem) avatar = "∑";
-
+  if (isSystem) avatar = "⚙";
   const timeLabel = !isUser && !isSystem && meta.durationMs != null
-    ? `<span class="message__time" title="время ответа">${escapeHTML(formatDuration(meta.durationMs))}</span>`
+    ? `<span class="message__time">${escapeHTML(formatDuration(meta.durationMs))}</span>`
     : "";
-
   el.innerHTML = `
     <div class="message__avatar">${avatar}</div>
     <div class="message__body">
@@ -84,33 +79,27 @@ function createMessage(pane, role, content, extraClass = "", meta = {}) {
       ${timeLabel}
     </div>
   `;
-  pane.chat.appendChild(el);
-  scrollPane(pane);
+  chatEl.appendChild(el);
+  scrollToBottom();
   return el;
 }
 
-function createTypingIndicator(pane) {
-  hideWelcome(pane);
+function createTypingIndicator() {
+  hideWelcome();
   const el = document.createElement("div");
   el.className = "message message--assistant message--typing";
-  el.id = pane.typingId;
+  el.id = "typingIndicator";
   el.innerHTML = `
     <div class="message__avatar">AI</div>
-    <div class="message__body">
-      <div class="message__bubble">
-        <span class="typing-dot"></span>
-        <span class="typing-dot"></span>
-        <span class="typing-dot"></span>
-      </div>
-    </div>
-  `;
-  pane.chat.appendChild(el);
-  scrollPane(pane);
-  return el;
+    <div class="message__body"><div class="message__bubble">
+      <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+    </div></div>`;
+  chatEl.appendChild(el);
+  scrollToBottom();
 }
 
-function removeTypingIndicator(pane) {
-  document.getElementById(pane.typingId)?.remove();
+function removeTypingIndicator() {
+  document.getElementById("typingIndicator")?.remove();
 }
 
 function setLoading(loading) {
@@ -118,6 +107,9 @@ function setLoading(loading) {
   sendBtn.disabled = loading;
   inputEl.disabled = loading;
   providerSelect.disabled = loading;
+  if (compareBtn) compareBtn.disabled = loading;
+  if (forkBtn) forkBtn.disabled = loading;
+  if (saveStrategyBtn) saveStrategyBtn.disabled = loading;
 }
 
 function autoResizeTextarea() {
@@ -141,31 +133,27 @@ function setDebugMode(enabled) {
   debugPanel.setAttribute("aria-hidden", enabled ? "false" : "true");
 }
 
+function setSettingsOpen(open) {
+  layoutEl.classList.toggle("layout--settings", open);
+  settingsPanel.setAttribute("aria-hidden", open ? "false" : "true");
+}
+
 function clearDebugLog() {
   debugEntryCount = 0;
-  debugLog.innerHTML = '<p class="debug-panel__empty">Запросы и шаги агентов появятся здесь.</p>';
+  debugLog.innerHTML = '<p class="debug-panel__empty">Запросы появятся здесь.</p>';
 }
 
 function appendDebugBlock(title, payload, extraClass = "") {
   const pre = document.createElement("pre");
   pre.className = `debug-block__code ${extraClass}`.trim();
   pre.textContent = formatJSON(payload);
-  return `
-    <div class="debug-block">
-      <div class="debug-block__title">${escapeHTML(title)}</div>
-      ${pre.outerHTML}
-    </div>
-  `;
+  return `<div class="debug-block"><div class="debug-block__title">${escapeHTML(title)}</div>${pre.outerHTML}</div>`;
 }
 
-function logExchange({ requestBody, status, responseBody, durationMs, url = "/api/chat/dual" }) {
+function logExchange({ requestBody, status, responseBody, durationMs, url = "/api/chat" }) {
   if (!debugEnabled) return;
-
-  if (debugEntryCount === 0) {
-    debugLog.innerHTML = "";
-  }
+  if (debugEntryCount === 0) debugLog.innerHTML = "";
   debugEntryCount += 1;
-
   const entry = document.createElement("article");
   entry.className = "debug-entry";
   entry.innerHTML = `
@@ -205,7 +193,6 @@ function renderProviders(list, defaultProvider) {
     opt.textContent = `${p.title} (${p.model}${lim})`;
     providerSelect.appendChild(opt);
   }
-
   const saved = localStorage.getItem(PROVIDER_STORAGE_KEY);
   const preferred =
     (defaultProvider && list.some((p) => p.id === defaultProvider) && defaultProvider) ||
@@ -213,7 +200,6 @@ function renderProviders(list, defaultProvider) {
     (list.find((p) => p.default)?.id) ||
     (list.some((p) => p.id === "local") && "local") ||
     (list[0] && list[0].id);
-
   if (preferred) providerSelect.value = preferred;
   updateProviderLabel();
 }
@@ -225,121 +211,232 @@ function formatCost(v) {
   return `$${v.toFixed(4)}`;
 }
 
-function updateTokenMeter(pane, tokens, session) {
-  if (!pane.text || !pane.bar) return;
-  if (!tokens && !session) {
-    pane.text.textContent = "токены: —";
-    pane.bar.style.width = "0%";
-    pane.bar.className = "token-meter__fill";
+function updateTokenMeter(tokens, session) {
+  if (!tokens) {
+    tokenMeterText.textContent = "токены: —";
+    tokenBarFill.style.width = "0%";
+    tokenBarFill.className = "token-meter__fill";
     return;
   }
-
-  const pct = Math.min(100, Math.max(0, (tokens && tokens.context_pct) || 0));
-  pane.bar.style.width = `${pct}%`;
-  pane.bar.className = "token-meter__fill";
-  if (tokens && (pct >= 90 || tokens.over_limit)) pane.bar.classList.add("token-meter__fill--danger");
-  else if (pct >= 60) pane.bar.classList.add("token-meter__fill--warn");
-
-  const last = tokens
-    ? `последний: ${tokens.total || tokens.prompt || 0} tok · prompt ${tokens.prompt || 0}/${tokens.context_limit || "?"} (${pct.toFixed(1)}%) · ${formatCost(tokens.cost_usd)}`
-    : "последний: —";
+  const pct = Math.min(100, Math.max(0, tokens.context_pct || 0));
+  tokenBarFill.style.width = `${pct}%`;
+  tokenBarFill.className = "token-meter__fill";
+  if (pct >= 90 || tokens.over_limit) tokenBarFill.classList.add("token-meter__fill--danger");
+  else if (pct >= 60) tokenBarFill.classList.add("token-meter__fill--warn");
   const sess = session
-    ? `сессия: ${session.total_tokens || 0} tok / ${formatCost(session.estimated_cost_usd)}`
-    : "сессия: —";
-  pane.text.textContent = `${last} · ${sess}`;
+    ? ` · сессия: ${session.total_tokens || 0} tok / ${formatCost(session.estimated_cost_usd)}`
+    : "";
+  tokenMeterText.textContent =
+    `prompt ${tokens.prompt || 0}/${tokens.context_limit || "?"} (${pct.toFixed(1)}%)` +
+    ` · out ${tokens.completion || 0} · ${formatCost(tokens.cost_usd)}${sess}`;
 }
 
-function updatePaneHint(paneKey, compression) {
-  const pane = panes[paneKey];
-  if (!pane.hint || !compression) return;
-  if (paneKey === "full" || !compression.enabled) {
-    pane.hint.textContent = `вся история · ${compression.full_history_messages || 0} сообщ. · ≈${compression.full_history_tokens || 0} tok`;
+function updateStrategyFieldsVisibility() {
+  const kind = document.querySelector('input[name="strategyKind"]:checked')?.value || "sliding";
+  document.getElementById("fieldSliding").style.display = kind === "sliding" ? "" : "none";
+  document.getElementById("fieldFacts").style.display = kind === "facts" ? "" : "none";
+  document.getElementById("fieldBranch").style.display = kind === "branch" ? "" : "none";
+  branchBar.hidden = kind !== "branch";
+}
+
+function applyStrategyToForm(st) {
+  currentStrategy = st || currentStrategy;
+  const kind = currentStrategy.kind || "sliding";
+  const radio = document.querySelector(`input[name="strategyKind"][value="${kind}"]`);
+  if (radio) radio.checked = true;
+  slidingN.value = currentStrategy.sliding_window_n || 8;
+  factsN.value = currentStrategy.facts_window_n || 6;
+  branchN.value = currentStrategy.branch_window_n ?? 0;
+  strategyLabel.textContent = kind;
+  updateStrategyFieldsVisibility();
+  updateHint();
+}
+
+function updateHint() {
+  const kind = currentStrategy.kind || "sliding";
+  if (kind === "sliding") {
+    appSubtitle.textContent = `Sliding: храним только последние ${currentStrategy.sliding_window_n} сообщ.`;
+  } else if (kind === "facts") {
+    appSubtitle.textContent = `Facts: KV-память + последние ${currentStrategy.facts_window_n} сообщ.`;
+  } else {
+    appSubtitle.textContent = `Branching: checkpoint и независимые ветки (окно ${currentStrategy.branch_window_n || "вся"})`;
+  }
+}
+
+function renderFacts(facts) {
+  if (!facts || !Object.keys(facts).length) {
+    factsPre.textContent = "—";
     return;
   }
-  const saved = compression.tokens_saved_estimate || 0;
-  pane.hint.textContent =
-    `summary ${compression.summarized_messages || 0} · сырых ${compression.raw_messages_in_prompt || 0}` +
-    (saved > 0 ? ` · экономия ≈ ${saved} tok` : "");
+  factsPre.textContent = Object.entries(facts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
 }
 
-function renderSummarizeEvents(pane, events) {
-  if (!Array.isArray(events) || !events.length) return;
+function renderBranches(branches, active) {
+  branchList.innerHTML = "";
+  if (!Array.isArray(branches) || !branches.length) {
+    branchList.innerHTML = '<span class="branch-bar__empty">нет веток — сделай checkpoint</span>';
+    return;
+  }
+  for (const b of branches) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `btn btn--ghost btn--sm branch-chip${b.active || b.id === active ? " branch-chip--active" : ""}`;
+    btn.textContent = `${b.title || b.id} (${b.messages || 0})`;
+    btn.addEventListener("click", () => switchBranch(b.id));
+    branchList.appendChild(btn);
+  }
+}
+
+function renderFactEvents(events) {
+  if (!Array.isArray(events)) return;
   for (const ev of events) {
-    const tok = ev.total_tokens || (ev.prompt_tokens || 0) + (ev.completion_tokens || 0);
-    const cost = formatCost(ev.cost_usd);
-    const n = ev.messages_compressed || 0;
-    let text =
-      `Произошло сжатие: ${n} сообщений свёрнуты в summary. ` +
-      `На операцию израсходовано ${tok} ток. (${cost})`;
-    if (ev.summary_preview) {
-      text += `\nПревью: ${ev.summary_preview}`;
+    const tok = ev.total_tokens || 0;
+    createMessage(
+      "system",
+      `Обновлены sticky facts (${Object.keys(ev.facts || {}).length} ключей). На извлечение: ${tok} tok · ${formatCost(ev.cost_usd)}`,
+      "message--system",
+    );
+    renderFacts(ev.facts);
+  }
+}
+
+function renderStrategyMeta(strategy) {
+  if (!strategy) return;
+  if (strategy.discarded_messages > 0 && strategy.kind === "sliding") {
+    createMessage(
+      "system",
+      `Sliding: отброшено ${strategy.discarded_messages} старых сообщений. В окне осталось ${strategy.messages_in_prompt}.`,
+      "message--system",
+    );
+  }
+  if (strategy.facts) renderFacts(strategy.facts);
+}
+
+async function loadStrategy() {
+  try {
+    const res = await fetch("/api/strategy");
+    if (!res.ok) return;
+    const data = await res.json();
+    applyStrategyToForm(data.strategy);
+    renderFacts(data.facts);
+    renderBranches(data.branches, data.active_branch);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function saveStrategy() {
+  const kind = document.querySelector('input[name="strategyKind"]:checked')?.value || "sliding";
+  const body = {
+    kind,
+    sliding_window_n: Number(slidingN.value) || 8,
+    facts_window_n: Number(factsN.value) || 6,
+    branch_window_n: Number(branchN.value) || 0,
+  };
+  setLoading(true);
+  try {
+    const res = await fetch("/api/strategy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Не удалось сохранить стратегию", "message--error");
+      return;
     }
-    createMessage(pane, "system", text, "message--system");
+    applyStrategyToForm(data.strategy);
+    renderFacts(data.facts);
+    renderBranches(data.branches, data.active_branch);
+    createMessage("system", `Стратегия: ${data.strategy.kind}`, "message--system");
+  } catch {
+    createMessage("assistant", "Не удалось сохранить стратегию", "message--error");
+  } finally {
+    setLoading(false);
   }
 }
 
-function renderPaneResult(paneKey, side, clientDurationMs) {
-  const pane = panes[paneKey];
-  removeTypingIndicator(pane);
-
-  if (side.error && !side.reply) {
-    createMessage(pane, "assistant", side.error, "message--error", {
-      durationMs: side.duration_ms ?? clientDurationMs,
+async function forkBranches() {
+  setLoading(true);
+  try {
+    const res = await fetch("/api/branch/fork", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title_a: "Ветка A", title_b: "Ветка B" }),
     });
-  } else if (side.reply) {
-    createMessage(pane, "assistant", side.reply, side.error ? "message--error" : "", {
-      durationMs: side.duration_ms ?? clientDurationMs,
-    });
+    const data = await res.json();
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Fork не удался", "message--error");
+      return;
+    }
+    renderBranches(data.branches, data.active_branch);
+    createMessage(
+      "system",
+      `Checkpoint @${data.checkpoint_at ?? "?"} · созданы ветки A/B. Активна: ${data.active_branch}`,
+      "message--system",
+    );
+  } catch {
+    createMessage("assistant", "Fork не удался", "message--error");
+  } finally {
+    setLoading(false);
   }
-
-  renderSummarizeEvents(pane, side.summarize_events);
-  updateTokenMeter(pane, side.tokens, side.session);
-  updatePaneHint(paneKey, side.compression);
 }
 
-function resetPaneUI(pane) {
-  pane.chat.innerHTML = "";
-  if (pane.welcome) {
-    pane.welcome.style.display = "";
-    pane.chat.appendChild(pane.welcome);
+async function switchBranch(id) {
+  setLoading(true);
+  try {
+    const res = await fetch("/api/branch/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ branch: id }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Не удалось переключить ветку", "message--error");
+      return;
+    }
+    history = [];
+    chatEl.innerHTML = "";
+    if (welcomeEl) {
+      welcomeEl.style.display = "";
+      chatEl.appendChild(welcomeEl);
+    }
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    for (const m of messages) {
+      if (m?.role && m?.content) createMessage(m.role, m.content);
+    }
+    history = messages.filter((m) => m.role === "user" || m.role === "assistant");
+    renderBranches(data.branches, data.active_branch);
+    renderFacts(data.facts);
+    updateTokenMeter(data.tokens, data.session);
+    createMessage("system", `Переключились на ветку ${data.active_branch}`, "message--system");
+  } catch {
+    createMessage("assistant", "Не удалось переключить ветку", "message--error");
+  } finally {
+    setLoading(false);
   }
-  updateTokenMeter(pane, null, null);
 }
 
 async function loadHistory() {
   try {
-    const res = await fetch("/api/history/dual");
+    const res = await fetch("/api/history");
     if (!res.ok) return;
     const data = await res.json();
-
-    for (const key of ["compress", "full"]) {
-      const side = data[key] || {};
-      const pane = panes[key];
-      const messages = Array.isArray(side.messages) ? side.messages : [];
-      updateTokenMeter(pane, side.tokens, side.session);
-      updatePaneHint(key, {
-        enabled: key === "compress",
-        ...(side.compression || {}),
-        full_history_messages: messages.length,
-      });
-      if (!messages.length) continue;
-      for (const m of messages) {
-        if (!m || !m.content) continue;
-        if (m.role === "user" || m.role === "assistant") {
-          createMessage(pane, m.role, m.content);
-        }
-      }
-      if (key === "compress" && side.summary) {
-        createMessage(
-          pane,
-          "system",
-          `Текущий summary (${side.compression?.summarize_every ? "политика сжатия активна" : "сохранён"}):\n${side.summary}`,
-          "message--system",
-        );
-      }
-    }
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    history = messages
+      .filter((m) => m && (m.role === "user" || m.role === "assistant") && m.content)
+      .map((m) => ({ role: m.role, content: m.content }));
+    updateTokenMeter(data.tokens, data.session);
+    if (data.strategy) applyStrategyToForm(data.strategy);
+    renderFacts(data.facts);
+    renderBranches(data.branches, data.active_branch);
+    if (!history.length) return;
+    for (const m of history) createMessage(m.role, m.content);
   } catch {
-    /* keep empty */
+    /* empty */
   }
 }
 
@@ -352,62 +449,87 @@ async function loadProviders() {
       renderProviders(data.providers, data.default_provider);
     }
   } catch {
-    /* keep defaults */
+    /* defaults */
   }
 }
 
 async function sendMessage(text) {
-  createMessage(panes.compress, "user", text);
-  createMessage(panes.full, "user", text);
-
+  createMessage("user", text);
   setLoading(true);
-  createTypingIndicator(panes.compress);
-  createTypingIndicator(panes.full);
-
-  const requestBody = {
-    message: text,
-    provider: currentProvider(),
-  };
+  createTypingIndicator();
+  const requestBody = { message: text, provider: currentProvider() };
   const started = performance.now();
-
   try {
     const headers = { "Content-Type": "application/json" };
     if (debugEnabled) headers["X-Debug"] = "true";
-
-    const res = await fetch("/api/chat/dual", {
+    const res = await fetch("/api/chat", {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
     });
-
     const data = await res.json();
     const durationMs = Math.round(performance.now() - started);
-
+    removeTypingIndicator();
     logExchange({ requestBody, status: res.status, responseBody: data, durationMs });
-
-    renderPaneResult("compress", data.compress || { error: data.error || "нет ответа" }, durationMs);
-    renderPaneResult("full", data.full || { error: data.error || "нет ответа" }, durationMs);
-
-    if (appSubtitle) {
-      const c = data.compress?.session?.total_tokens ?? "—";
-      const f = data.full?.session?.total_tokens ?? "—";
-      appSubtitle.textContent = `сессия: сжатие ${c} tok · без сжатия ${f} tok · Enter — отправить`;
+    if (!res.ok) {
+      updateTokenMeter(data.tokens, data.session);
+      createMessage("assistant", data.error || "Ошибка", "message--error", {
+        durationMs: data.duration_ms ?? durationMs,
+      });
+      return;
     }
+    renderFactEvents(data.fact_events);
+    createMessage("assistant", data.reply, "", { durationMs: data.duration_ms ?? durationMs });
+    renderStrategyMeta(data.strategy);
+    history.push({ role: "user", content: text });
+    history.push({ role: "assistant", content: data.reply });
+    updateTokenMeter(data.tokens, data.session);
+    if (data.strategy) {
+      currentStrategy.kind = data.strategy.kind || currentStrategy.kind;
+      strategyLabel.textContent = currentStrategy.kind;
+    }
+    await loadStrategy();
   } catch (err) {
-    removeTypingIndicator(panes.compress);
-    removeTypingIndicator(panes.full);
-    const durationMs = Math.round(performance.now() - started);
+    removeTypingIndicator();
     logExchange({
       requestBody,
       status: 0,
-      responseBody: { error: "Не удалось связаться с сервером", details: String(err) },
-      durationMs,
+      responseBody: { error: String(err) },
+      durationMs: Math.round(performance.now() - started),
     });
-    createMessage(panes.compress, "assistant", "Не удалось связаться с сервером.", "message--error");
-    createMessage(panes.full, "assistant", "Не удалось связаться с сервером.", "message--error");
+    createMessage("assistant", "Не удалось связаться с сервером.", "message--error");
   } finally {
     setLoading(false);
     inputEl.focus();
+  }
+}
+
+async function runCompare() {
+  setLoading(true);
+  createMessage("user", "Сравни 3 стратегии на сценарии «собираем ТЗ»");
+  createTypingIndicator();
+  const requestBody = { provider: currentProvider() };
+  const started = performance.now();
+  try {
+    const res = await fetch("/api/strategy/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    const data = await res.json();
+    const durationMs = Math.round(performance.now() - started);
+    removeTypingIndicator();
+    logExchange({ url: "/api/strategy/compare", requestBody, status: res.status, responseBody: data, durationMs });
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Сравнение упало", "message--error", { durationMs });
+      return;
+    }
+    createMessage("assistant", data.report || JSON.stringify(data, null, 2), "message--mono", { durationMs });
+  } catch {
+    removeTypingIndicator();
+    createMessage("assistant", "Не удалось сравнить стратегии.", "message--error");
+  } finally {
+    setLoading(false);
   }
 }
 
@@ -426,31 +548,46 @@ inputEl.addEventListener("keydown", (e) => {
     formEl.requestSubmit();
   }
 });
-
 inputEl.addEventListener("input", autoResizeTextarea);
 
 clearBtn.addEventListener("click", async () => {
   try {
     await fetch("/api/history", { method: "DELETE" });
   } catch {
-    /* still clear UI */
+    /* ui clear anyway */
   }
-  resetPaneUI(panes.compress);
-  resetPaneUI(panes.full);
-  if (appSubtitle) appSubtitle.textContent = "Enter — отправить в оба чата";
+  history = [];
+  chatEl.innerHTML = "";
+  if (welcomeEl) {
+    welcomeEl.style.display = "";
+    chatEl.appendChild(welcomeEl);
+  }
+  updateTokenMeter(null, null);
+  renderFacts(null);
+  renderBranches([], "");
   inputEl.focus();
+});
+
+settingsBtn.addEventListener("click", () => setSettingsOpen(!layoutEl.classList.contains("layout--settings")));
+settingsCloseBtn.addEventListener("click", () => setSettingsOpen(false));
+saveStrategyBtn.addEventListener("click", saveStrategy);
+compareBtn.addEventListener("click", () => {
+  if (!isLoading) runCompare();
+});
+forkBtn.addEventListener("click", () => {
+  if (!isLoading) forkBranches();
+});
+
+document.querySelectorAll('input[name="strategyKind"]').forEach((el) => {
+  el.addEventListener("change", updateStrategyFieldsVisibility);
 });
 
 providerSelect.addEventListener("change", () => {
   localStorage.setItem(PROVIDER_STORAGE_KEY, currentProvider());
   updateProviderLabel();
 });
-
-debugToggle.addEventListener("change", () => {
-  setDebugMode(debugToggle.checked);
-});
-
+debugToggle.addEventListener("change", () => setDebugMode(debugToggle.checked));
 clearDebugBtn.addEventListener("click", clearDebugLog);
 
 setDebugMode(debugEnabled);
-Promise.all([loadProviders(), loadHistory()]).then(() => inputEl.focus());
+Promise.all([loadProviders(), loadStrategy(), loadHistory()]).then(() => inputEl.focus());

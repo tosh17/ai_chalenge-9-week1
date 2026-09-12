@@ -26,6 +26,11 @@ type Config struct {
 	CompressEnabled  bool
 	CompressKeepLast int
 	CompressEvery    int
+
+	StrategyKind   string
+	SlidingWindowN int
+	FactsWindowN   int
+	BranchWindowN  int
 }
 
 func Load() (*Config, error) {
@@ -43,6 +48,10 @@ func Load() (*Config, error) {
 		CompressEnabled:   getEnvBool("COMPRESS_ENABLED", true),
 		CompressKeepLast:  getEnvInt("COMPRESS_KEEP_LAST", 6),
 		CompressEvery:     getEnvInt("COMPRESS_EVERY", 10),
+		StrategyKind:      getEnv("CONTEXT_STRATEGY", "sliding"),
+		SlidingWindowN:    getEnvInt("SLIDING_WINDOW_N", 8),
+		FactsWindowN:      getEnvInt("FACTS_WINDOW_N", 6),
+		BranchWindowN:     getEnvInt("BRANCH_WINDOW_N", 0),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")

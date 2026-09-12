@@ -43,15 +43,17 @@ type Request struct {
 
 // Result — выход агента: ответ и служебные метаданные.
 type Result struct {
-	Reply            string
-	Provider         string
-	Model            string
-	DurationMs       int64
-	Tokens           *tokens.Usage         `json:"tokens,omitempty"`
-	Session          *tokens.SessionTotals `json:"session,omitempty"`
-	Compression      *CompressionInfo      `json:"compression,omitempty"`
-	SummarizeEvents  []SummarizeEvent      `json:"summarize_events,omitempty"`
-	Debug            *deepseek.DebugInfo
+	Reply           string
+	Provider        string
+	Model           string
+	DurationMs      int64
+	Tokens          *tokens.Usage         `json:"tokens,omitempty"`
+	Session         *tokens.SessionTotals `json:"session,omitempty"`
+	Compression     *CompressionInfo      `json:"compression,omitempty"`
+	SummarizeEvents []SummarizeEvent      `json:"summarize_events,omitempty"`
+	Strategy        *StrategyInfo         `json:"strategy,omitempty"`
+	FactEvents      []FactUpdateEvent     `json:"fact_events,omitempty"`
+	Debug           *deepseek.DebugInfo
 }
 
 // ErrContextOverflow — prompt превышает лимит контекста.
@@ -82,6 +84,7 @@ type Agent struct {
 	order        []string
 	memory       *memory.Store
 	compression  CompressionConfig
+	strategy     ContextStrategy
 
 	contextLimit      int
 	forceContextLimit bool
@@ -105,6 +108,7 @@ func New(name string) *Agent {
 		contextLimit: 1_000_000, // DeepSeek V4 Flash context window
 		pricing:      tokens.DefaultFlashPricing(),
 		compression:  defaultCompression(),
+		strategy:     defaultStrategy(),
 	}
 }
 
@@ -124,6 +128,7 @@ func (a *Agent) CloneWithMemory(name string, store *memory.Store) *Agent {
 	clone.forceContextLimit = a.forceContextLimit
 	clone.pricing = a.pricing
 	clone.compression = a.compression
+	clone.strategy = a.strategy
 	clone.memory = store
 	return clone
 }
@@ -171,6 +176,7 @@ func (a *Agent) Clone(name string) *Agent {
 	c.pricing = a.pricing
 	c.systemPrompt = a.systemPrompt
 	c.compression = a.compression
+	c.strategy = a.strategy
 	return c
 }
 
@@ -385,24 +391,50 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("agent %q: unknown provider %q", a.name, providerID)
 	}
 
-	compress := a.compression.Enabled
-	if req.Compress != nil {
-		compress = *req.Compress
-	}
+	// Day10 strategy mode (default). Legacy compress only when Kind пустой/"compress".
+	useStrategy := a.strategy.Kind == StrategySliding ||
+		a.strategy.Kind == StrategyFacts ||
+		a.strategy.Kind == StrategyBranch
 
 	var sumEvents []SummarizeEvent
-	if compress {
-		ev, err := a.maybeCompress(ctx, providerID)
-		if err != nil {
-			return Result{Provider: providerID, Model: b.model, SummarizeEvents: ev}, fmt.Errorf("agent %q: compress: %w", a.name, err)
+	var factEvents []FactUpdateEvent
+	var stratInfo StrategyInfo
+	var messages []deepseek.Message
+	var compInfo CompressionInfo
+
+	if useStrategy {
+		if a.strategy.Kind == StrategyFacts {
+			ev, err := a.updateStickyFacts(ctx, providerID, req.Message)
+			if err == nil {
+				factEvents = append(factEvents, ev)
+				stratInfo.FactsUpdated = true
+			} else {
+				// не роняем чат из‑за facts
+				_ = err
+			}
 		}
-		sumEvents = append(sumEvents, ev...)
+		messages, stratInfo = a.buildMessagesStrategy(req)
+		if len(factEvents) > 0 && factEvents[0].Facts != nil {
+			stratInfo.Facts = factEvents[0].Facts
+		}
+	} else {
+		compress := a.compression.Enabled
+		if req.Compress != nil {
+			compress = *req.Compress
+		}
+		if compress {
+			ev, err := a.maybeCompress(ctx, providerID)
+			if err != nil {
+				return Result{Provider: providerID, Model: b.model, SummarizeEvents: ev}, fmt.Errorf("agent %q: compress: %w", a.name, err)
+			}
+			sumEvents = append(sumEvents, ev...)
+		}
+		messages = a.buildMessagesCompressed(req, compress)
+		compInfo = a.ContextStats(providerID, compress)
 	}
 
-	messages := a.buildMessagesCompressed(req, compress)
 	limit := a.ContextLimit(providerID)
 	usage := a.buildTokenUsage(messages, req.Message, b.model, nil, limit)
-	compInfo := a.ContextStats(providerID, compress)
 	session := a.SessionTotals()
 
 	if usage.OverLimit {
@@ -413,6 +445,8 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 			Session:         &session,
 			Compression:     &compInfo,
 			SummarizeEvents: sumEvents,
+			Strategy:        &stratInfo,
+			FactEvents:      factEvents,
 		}, &ErrContextOverflow{Usage: usage}
 	}
 
@@ -429,6 +463,8 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 			Session:         &session,
 			Compression:     &compInfo,
 			SummarizeEvents: sumEvents,
+			Strategy:        &stratInfo,
+			FactEvents:      factEvents,
 			Debug:           &debug,
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
@@ -457,15 +493,29 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 				Session:         &sess,
 				Compression:     &compInfo,
 				SummarizeEvents: sumEvents,
+				Strategy:        &stratInfo,
+				FactEvents:      factEvents,
 			}, fmt.Errorf("agent %q: save memory: %w", a.name, saveErr)
 		}
-		if compress {
+
+		if useStrategy && a.strategy.Kind == StrategySliding {
+			if discarded, tErr := a.applySlidingPersist(); tErr == nil && discarded > 0 {
+				stratInfo.DiscardedMessages += discarded
+			}
+			// после truncate обновим счётчик сообщений в промпте следующего хода
+			stratInfo.MessagesInPrompt = a.memory.Len()
+		}
+
+		if !useStrategy && a.compression.Enabled && (req.Compress == nil || *req.Compress) {
 			ev, cErr := a.maybeCompress(ctx, providerID)
 			if cErr == nil && len(ev) > 0 {
 				sumEvents = append(sumEvents, ev...)
 			}
-			compInfo = a.ContextStats(providerID, compress)
+			compInfo = a.ContextStats(providerID, true)
 			sess = a.SessionTotals()
+		} else {
+			sess = a.SessionTotals()
+			stratInfo = mergeStrategyLive(stratInfo, a.strategySnapshot())
 		}
 	}
 
@@ -479,8 +529,18 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 		Session:         &sess,
 		Compression:     &compInfo,
 		SummarizeEvents: sumEvents,
+		Strategy:        &stratInfo,
+		FactEvents:      factEvents,
 		Debug:           &debug,
 	}, nil
+}
+
+func mergeStrategyLive(base, live StrategyInfo) StrategyInfo {
+	base.Facts = live.Facts
+	base.ActiveBranch = live.ActiveBranch
+	base.Branches = live.Branches
+	base.CheckpointAt = live.CheckpointAt
+	return base
 }
 
 func (a *Agent) addSession(u tokens.Usage) tokens.SessionTotals {
