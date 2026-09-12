@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -18,19 +19,23 @@ type Config struct {
 	LocalModel   string
 	LocalTitle   string
 
-	ChatHistoryPath string
+	ChatHistoryPath   string
+	ContextTokenLimit int // DeepSeek default context
+	LocalContextLimit int // Qwen / local context
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:            getEnv("PORT", "8080"),
-		DeepSeekModel:   getEnv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-		DeepSeekURL:     getEnv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions"),
-		LocalAPIURL:     getEnv("LOCAL_API_URL", ""),
-		LocalAPIKey:     getEnv("LOCAL_API_KEY", ""),
-		LocalModel:      getEnv("LOCAL_MODEL", "qwen-local"),
-		LocalTitle:      getEnv("LOCAL_TITLE", "Local-Qwen"),
-		ChatHistoryPath: getEnv("CHAT_HISTORY_PATH", "data/chat-history.json"),
+		Port:              getEnv("PORT", "8080"),
+		DeepSeekModel:     getEnv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+		DeepSeekURL:       getEnv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions"),
+		LocalAPIURL:       getEnv("LOCAL_API_URL", ""),
+		LocalAPIKey:       getEnv("LOCAL_API_KEY", ""),
+		LocalModel:        getEnv("LOCAL_MODEL", "qwen-local"),
+		LocalTitle:        getEnv("LOCAL_TITLE", "Local-Qwen"),
+		ChatHistoryPath:   getEnv("CHAT_HISTORY_PATH", "data/chat-history.json"),
+		ContextTokenLimit: getEnvInt("CONTEXT_TOKEN_LIMIT", 1_000_000),
+		LocalContextLimit: getEnvInt("LOCAL_CONTEXT_LIMIT", 256_000),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
@@ -49,6 +54,18 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 // NormalizeChatURL принимает .../v1 или .../v1/chat/completions.

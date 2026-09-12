@@ -19,8 +19,8 @@
           <div>
             <h1 class="header__title" id="appTitle">Springfield Agent</h1>
             <p class="header__subtitle">
-              Агент: <span class="header__model">day7-chat-agent</span>
-              · <span id="providerLabel" class="header__model">DeepSeek</span>
+              Агент: <span class="header__model">day8-chat-agent</span>
+              · <span id="providerLabel" class="header__model">Local-Qwen</span>
             </p>
           </div>
         </div>
@@ -28,12 +28,17 @@
           <label class="provider-select" title="Выбор LLM-бэкенда">
             <span class="provider-select__label">Мозги</span>
             <select id="providerSelect" class="provider-select__control" aria-label="Провайдер модели">
+              <option value="local">Local-Qwen</option>
               <option value="deepseek">DeepSeek</option>
             </select>
           </label>
+          <button type="button" id="tokenDemoBtn" class="btn btn--ghost" title="Короткий, длинный и переполненный диалог">
+            Демо токенов
+          </button>
           <button type="button" id="designBtn" class="btn btn--accent">
             Рестайл
           </button>
+          <a class="btn btn--ghost" href="/chatAi" title="Диалог двух персонажей">ChatAI</a>
           <label class="debug-toggle" title="Показать панель отладки">
             <input type="checkbox" id="debugToggle">
             <span class="debug-toggle__track"></span>
@@ -49,7 +54,7 @@
         <div class="welcome" id="welcome">
           <img class="welcome__donut" src="/static/img/agent-logo.png" alt="" width="96" height="96">
           <h2 id="welcomeTitle">D’oh! Начни диалог</h2>
-          <p id="welcomeText">История диалога сохраняется на сервере и переживает перезапуск.</p>
+          <p id="welcomeText">Токены считаются на каждый запрос, историю и ответ — смотри панель ниже.</p>
         </div>
       </main>
 
@@ -69,6 +74,10 @@
           </button>
         </form>
         <p class="composer__hint" id="appSubtitle">Enter — отправить</p>
+        <div class="token-meter" id="tokenMeter" aria-live="polite">
+          <div class="token-meter__bar"><span id="tokenBarFill" class="token-meter__fill"></span></div>
+          <p class="token-meter__text" id="tokenMeterText">токены: —</p>
+        </div>
       </footer>
     </div>
 

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatAI — диалог персонажей</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/chatai.css?v=3">
+</head>
+<body>
+  <div class="sky" aria-hidden="true"></div>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <p class="top__eyebrow"><a href="/">← основной чат</a></p>
+        <h1>ChatAI</h1>
+        <p class="top__sub">Два персонажа со своими промптами общаются друг с другом</p>
+      </div>
+      <label class="field field--inline">
+        <span>Мозги</span>
+        <select id="providerSelect">
+          <option value="local">Local-Qwen</option>
+          <option value="deepseek">DeepSeek</option>
+        </select>
+      </label>
+    </header>
+
+    <section class="setup comic">
+      <div class="chars">
+        <article class="char char--a">
+          <h2>Персонаж A</h2>
+          <label class="field">
+            <span>Имя</span>
+            <input id="nameA" type="text" value="Гомер" maxlength="40">
+          </label>
+          <label class="field">
+            <span>Промпт</span>
+            <textarea id="promptA" rows="5">Ты добродушный обжора из маленького города. Говоришь просто, любишь пончики и диван. Иногда восклицаешь «D'oh!», но не переигрывай.</textarea>
+          </label>
+        </article>
+        <article class="char char--b">
+          <h2>Персонаж B</h2>
+          <label class="field">
+            <span>Имя</span>
+            <input id="nameB" type="text" value="Лиза" maxlength="40">
+          </label>
+          <label class="field">
+            <span>Промпт</span>
+            <textarea id="promptB" rows="5">Ты умная и принципиальная девочка. Спокойно объясняешь, любишь факты и справедливость. Иногда мягко подкалываешь собеседника.</textarea>
+          </label>
+        </article>
+      </div>
+
+      <div class="scene">
+        <label class="field">
+          <span>Тема / сцена</span>
+          <textarea id="topic" rows="2">Поспорьте, что важнее вечером: пончики или домашка по саксофону.</textarea>
+        </label>
+        <button type="button" id="startBtn" class="btn">Начать диалог</button>
+        <button type="button" id="stopBtn" class="btn btn--ghost" disabled>Стоп</button>
+      </div>
+    </section>
+
+    <section class="stage comic">
+      <div class="stage__head">
+        <h2>Диалог</h2>
+        <p id="status" class="status">Задай промпты и жми «Начать диалог».</p>
+      </div>
+      <div id="log" class="log" aria-live="polite"></div>
+    </section>
+  </div>
+  <script src="/static/chatai.js?v=3"></script>
+</body>
+</html>

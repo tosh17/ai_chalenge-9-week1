@@ -278,8 +278,21 @@ body {
   background: var(--surface);
 }
 
-.message__bubble {
+.message__body {
+  position: relative;
   max-width: 75%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.message--user .message__body {
+  align-items: flex-end;
+}
+
+.message__bubble {
+  max-width: 100%;
   padding: 12px 16px;
   border-radius: var(--radius);
   border: var(--border-width) solid var(--border);
@@ -304,11 +317,31 @@ body {
   color: var(--error);
 }
 
+.message--mono .message__bubble {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-x: auto;
+  max-width: min(920px, 95vw);
+}
+
 .message--typing .message__bubble {
   display: flex;
   gap: 6px;
   align-items: center;
   min-width: 64px;
+}
+
+.message__time {
+  align-self: flex-end;
+  margin-top: 4px;
+  padding: 0 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  opacity: 0.85;
+  letter-spacing: 0.02em;
+  user-select: none;
 }
 
 .typing-dot {
@@ -364,6 +397,47 @@ body {
   font-weight: 600;
 }
 
+.token-meter {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.token-meter__bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.12);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.token-meter__fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.token-meter__fill--warn {
+  background: #e6a700;
+}
+
+.token-meter__fill--danger {
+  background: var(--error);
+}
+
+.token-meter__text {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.35;
+}
+
 .btn {
   border: var(--border-width) solid var(--border);
   cursor: pointer;
@@ -372,6 +446,15 @@ body {
   border-radius: 999px;
   transition: transform 0.1s, box-shadow 0.1s;
   box-shadow: 2px 2px 0 var(--border);
+}
+
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+  padding: 8px 14px;
+  background: #fff;
 }
 
 .btn:hover:not(:disabled) {
@@ -543,5 +626,5 @@ body {
   .header__subtitle { display: none; }
   .provider-select__label,
   .debug-toggle span:last-child { display: none; }
-  .message__bubble { max-width: 85%; }
+  .message__body { max-width: 85%; }
 }

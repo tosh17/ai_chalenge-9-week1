@@ -19,6 +19,14 @@ var indexTemplate = func() *template.Template {
 	return template.Must(template.New("index").Parse(string(data)))
 }()
 
+var chatAITemplate = func() *template.Template {
+	data, err := webFS.ReadFile("web/chatai.html")
+	if err != nil {
+		log.Fatal(err)
+	}
+	return template.Must(template.New("chatai").Parse(string(data)))
+}()
+
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	staticFS, err := fs.Sub(webFS, "web/static")
 	if err != nil {
@@ -27,17 +35,29 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("GET /{$}", h.Index)
+	mux.HandleFunc("GET /chatAi", h.ChatAI)
+	mux.HandleFunc("GET /chatAi/", h.ChatAI)
 	mux.HandleFunc("GET /health", h.Health)
 	mux.HandleFunc("GET /api/providers", h.Providers)
 	mux.HandleFunc("GET /api/history", h.History)
 	mux.HandleFunc("DELETE /api/history", h.ClearHistory)
 	mux.HandleFunc("POST /api/chat", h.Chat)
+	mux.HandleFunc("POST /api/chat-ai", h.ChatAIRun)
+	mux.HandleFunc("POST /api/token-demo", h.TokenDemo)
 	mux.HandleFunc("POST /api/design", h.Design)
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := indexTemplate.Execute(w, map[string]string{"Model": h.model}); err != nil {
+		http.Error(w, "page render error", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) ChatAI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := chatAITemplate.Execute(w, nil); err != nil {
 		http.Error(w, "page render error", http.StatusInternalServerError)
 	}
 }

@@ -24,15 +24,18 @@ func main() {
 	log.Printf("chat memory: %s (%d messages)", store.Path(), store.Len())
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day7-chat-agent").
+	chatAgent := agent.New("day8-chat-agent").
 		WithMemory(store).
-		WithBackend(agent.ProviderDeepSeek, "DeepSeek", cfg.DeepSeekModel, deepseekClient)
+		WithContextLimit(cfg.ContextTokenLimit).
+		WithBackendLimit(agent.ProviderDeepSeek, "DeepSeek", cfg.DeepSeekModel, deepseekClient, cfg.ContextTokenLimit)
 
 	if cfg.LocalEnabled {
 		localURL := config.NormalizeChatURL(cfg.LocalAPIURL)
 		localClient := deepseek.NewClient(cfg.LocalAPIKey, cfg.LocalModel, localURL)
-		chatAgent.WithBackend(agent.ProviderLocal, cfg.LocalTitle, cfg.LocalModel, localClient)
-		log.Printf("local provider enabled: %s @ %s", cfg.LocalModel, localURL)
+		chatAgent.
+			WithBackendLimit(agent.ProviderLocal, cfg.LocalTitle, cfg.LocalModel, localClient, cfg.LocalContextLimit).
+			WithDefaultProvider(agent.ProviderLocal)
+		log.Printf("local provider enabled (default): %s @ %s (context=%d)", cfg.LocalModel, localURL, cfg.LocalContextLimit)
 	}
 
 	crew := agent.NewDesignCrew(chatAgent)
@@ -42,7 +45,10 @@ func main() {
 	h.RegisterRoutes(mux)
 
 	addr := ":" + cfg.Port
-	log.Printf("server listening on %s (agent: %s, providers: %d, memory: on)", addr, chatAgent.Name(), len(chatAgent.Providers()))
+	log.Printf(
+		"server listening on %s (agent: %s, default: %s, providers: %d)",
+		addr, chatAgent.Name(), chatAgent.DefaultProvider(), len(chatAgent.Providers()),
+	)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)
 	}

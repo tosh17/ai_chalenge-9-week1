@@ -32,9 +32,19 @@ type chatResponse struct {
 	Choices []struct {
 		Message Message `json:"message"`
 	} `json:"choices"`
+	Usage *Usage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+}
+
+// Usage — токены из ответа провайдера (OpenAI-compatible).
+type Usage struct {
+	PromptTokens       int `json:"prompt_tokens"`
+	CompletionTokens   int `json:"completion_tokens"`
+	TotalTokens        int `json:"total_tokens"`
+	PromptCacheHitTok  int `json:"prompt_cache_hit_tokens"`
+	PromptCacheMissTok int `json:"prompt_cache_miss_tokens"`
 }
 
 type DebugInfo struct {
@@ -47,6 +57,7 @@ type DebugInfo struct {
 
 type ChatResult struct {
 	Reply string
+	Usage *Usage
 	Debug DebugInfo
 }
 
@@ -56,7 +67,8 @@ func NewClient(apiKey, model, baseURL string) *Client {
 		model:   model,
 		baseURL: baseURL,
 		http: &http.Client{
-			Timeout: 120 * time.Second,
+			// 0 = без лимита: ждём ответ модели сколько нужно.
+			Timeout: 0,
 		},
 	}
 }
@@ -121,6 +133,7 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (ChatResult, erro
 
 	return ChatResult{
 		Reply: result.Choices[0].Message.Content,
+		Usage: result.Usage,
 		Debug: debug,
 	}, nil
 }
