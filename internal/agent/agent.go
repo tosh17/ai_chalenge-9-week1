@@ -39,6 +39,10 @@ type Request struct {
 	Provider string             // deepseek | local
 	// Compress: nil = настройка агента; &true/&false = явный режим на этот ход.
 	Compress *bool
+	// Inject*: nil = политика агента; явные флаги — какие слои памяти подмешать в этот ход.
+	InjectSTM *bool
+	InjectWM  *bool
+	InjectLTM *bool
 }
 
 // Result — выход агента: ответ и служебные метаданные.
@@ -53,6 +57,8 @@ type Result struct {
 	SummarizeEvents []SummarizeEvent      `json:"summarize_events,omitempty"`
 	Strategy        *StrategyInfo         `json:"strategy,omitempty"`
 	FactEvents      []FactUpdateEvent     `json:"fact_events,omitempty"`
+	Memory          *MemoryInfo           `json:"memory,omitempty"`
+	RouteEvents     []MemoryRouteEvent    `json:"route_events,omitempty"`
 	Debug           *deepseek.DebugInfo
 }
 
@@ -83,6 +89,8 @@ type Agent struct {
 	backends     map[string]backend
 	order        []string
 	memory       *memory.Store
+	layers       *memory.Layers
+	memoryPolicy MemoryPolicy
 	compression  CompressionConfig
 	strategy     ContextStrategy
 
@@ -109,6 +117,7 @@ func New(name string) *Agent {
 		pricing:      tokens.DefaultFlashPricing(),
 		compression:  defaultCompression(),
 		strategy:     defaultStrategy(),
+		memoryPolicy: defaultMemoryPolicy(),
 	}
 }
 
@@ -129,6 +138,7 @@ func (a *Agent) CloneWithMemory(name string, store *memory.Store) *Agent {
 	clone.pricing = a.pricing
 	clone.compression = a.compression
 	clone.strategy = a.strategy
+	clone.memoryPolicy = a.memoryPolicy
 	clone.memory = store
 	return clone
 }
@@ -177,6 +187,7 @@ func (a *Agent) Clone(name string) *Agent {
 	c.systemPrompt = a.systemPrompt
 	c.compression = a.compression
 	c.strategy = a.strategy
+	c.memoryPolicy = a.memoryPolicy
 	return c
 }
 
@@ -209,6 +220,9 @@ func (a *Agent) Memory() *memory.Store {
 
 // History — сохранённые user/assistant сообщения (без system).
 func (a *Agent) History() []deepseek.Message {
+	if a.layers != nil {
+		return a.layers.ShortTerm()
+	}
 	if a.memory == nil {
 		return nil
 	}
@@ -220,6 +234,9 @@ func (a *Agent) ClearHistory() error {
 	a.mu.Lock()
 	a.session = tokens.SessionTotals{}
 	a.mu.Unlock()
+	if a.layers != nil {
+		return a.layers.ClearShortTerm()
+	}
 	if a.memory == nil {
 		return nil
 	}
@@ -293,6 +310,17 @@ func (a *Agent) TokenSnapshot(message string, providerID ...string) tokens.Usage
 	}
 	limit := a.ContextLimit(pid)
 
+	if a.layers != nil {
+		if message == "" {
+			msgs, _ := a.buildMessagesLayers("", a.memoryPolicy)
+			if len(msgs) > 0 && msgs[len(msgs)-1].Role == "user" && msgs[len(msgs)-1].Content == "" {
+				msgs = msgs[:len(msgs)-1]
+			}
+			return a.buildTokenUsage(msgs, "", model, nil, limit)
+		}
+		msgs, _ := a.buildMessagesLayers(message, a.memoryPolicy)
+		return a.buildTokenUsage(msgs, message, model, nil, limit)
+	}
 	if message == "" {
 		msgs := make([]deepseek.Message, 0)
 		if a.systemPrompt != "" {
@@ -389,6 +417,10 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 	b, ok := a.backends[providerID]
 	if !ok {
 		return Result{}, fmt.Errorf("agent %q: unknown provider %q", a.name, providerID)
+	}
+
+	if a.layers != nil {
+		return a.handleWithLayers(ctx, req, providerID, b)
 	}
 
 	// Day10 strategy mode (default). Legacy compress only when Kind пустой/"compress".

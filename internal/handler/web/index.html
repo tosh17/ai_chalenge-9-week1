@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Springfield Agent — Day10 Strategies</title>
+  <title>Springfield Agent — Day11 Memory</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
@@ -11,105 +11,125 @@
 </head>
 <body>
   <div class="sky" aria-hidden="true"></div>
-  <div class="layout" id="layout">
-    <div class="app comic-panel">
-      <header class="header">
-        <div class="header__brand">
-          <img class="header__logo-img" src="/static/img/agent-logo.png" alt="" width="56" height="56">
-          <div>
-            <h1 class="header__title">Springfield Agent</h1>
-            <p class="header__subtitle">
-              Day10 · стратегии контекста
-              · <span id="providerLabel" class="header__model">Local-Qwen</span>
-              · <span id="strategyLabel" class="header__model">sliding</span>
-            </p>
-          </div>
+  <div class="layout layout--nav" id="layout">
+    <aside class="nav" id="settingsPanel" aria-hidden="false">
+      <div class="nav__brand">
+        <img class="nav__logo" src="/static/img/agent-logo.png" alt="" width="36" height="36">
+        <div class="nav__brand-text">
+          <strong>Springfield</strong>
+          <span>Day11 · память</span>
         </div>
-        <div class="header__actions">
-          <label class="provider-select" title="Выбор LLM-бэкенда">
-            <span class="provider-select__label">Мозги</span>
-            <select id="providerSelect" class="provider-select__control" aria-label="Провайдер модели">
-              <option value="local">Local-Qwen</option>
-              <option value="deepseek">DeepSeek</option>
-            </select>
-          </label>
-          <button type="button" id="settingsBtn" class="btn btn--ghost" title="Стратегии и параметры">Настройки</button>
-          <button type="button" id="compareBtn" class="btn btn--ghost" title="Прогнать сценарий ТЗ на 3 стратегиях">Сравнить</button>
-          <a class="btn btn--ghost" href="/chatAi">ChatAI</a>
-          <label class="debug-toggle" title="Показать панель отладки">
-            <input type="checkbox" id="debugToggle">
-            <span class="debug-toggle__track"></span>
-            <span>Отладка</span>
-          </label>
-          <button type="button" id="clearBtn" class="btn btn--ghost">Очистить</button>
+        <button type="button" id="settingsCloseBtn" class="nav__collapse" title="Свернуть меню" aria-label="Свернуть меню">‹</button>
+      </div>
+
+      <div class="nav__scroll">
+      <section class="nav__block">
+        <h3>Мозги</h3>
+        <select id="providerSelect" class="nav__select" aria-label="Провайдер модели">
+          <option value="local">Local-Qwen</option>
+          <option value="deepseek">DeepSeek</option>
+        </select>
+        <p class="nav__meta nav__meta--sr" id="providerLabel">Local-Qwen</p>
+      </section>
+
+      <section class="nav__block">
+        <h3>В промпт</h3>
+        <div class="nav__checks">
+          <label class="nav__check"><input type="checkbox" id="injectSTM" checked> STM</label>
+          <label class="nav__check"><input type="checkbox" id="injectWM" checked> WM</label>
+          <label class="nav__check"><input type="checkbox" id="injectLTM" checked> LTM</label>
+        </div>
+        <label class="nav__field">
+          Окно STM
+          <input type="number" id="stmWindow" min="2" max="40" value="8">
+        </label>
+        <button type="button" id="saveStrategyBtn" class="btn btn--accent btn--sm nav__btn">Сохранить</button>
+        <p class="nav__meta" id="strategyLabel">LTM+WM+STM/8</p>
+        <p class="nav__hint" id="appSubtitle">#задача · #профиль · #решение · #запомни</p>
+      </section>
+
+      <section class="nav__block nav__actions">
+        <button type="button" id="clearBtn" class="btn btn--ghost btn--sm nav__btn">Новый диалог</button>
+        <button type="button" id="compareBtn" class="btn btn--ghost btn--sm nav__btn">Демо слоёв</button>
+        <a class="btn btn--ghost btn--sm nav__btn" href="/chatAi">ChatAI</a>
+        <label class="debug-toggle nav__debug" title="Панель отладки">
+          <input type="checkbox" id="debugToggle">
+          <span class="debug-toggle__track"></span>
+          <span>Отладка</span>
+        </label>
+      </section>
+
+      <section class="nav__block nav__memory">
+        <h3>Слои</h3>
+        <article class="memory-card memory-card--stm">
+          <header class="memory-card__head">
+            <h4>STM</h4>
+            <button type="button" id="clearStmBtn" class="btn btn--ghost btn--xs">очистить</button>
+          </header>
+          <p class="memory-card__meta" id="stmMeta">0 сообщ.</p>
+          <pre class="memory-card__pre" id="stmPre">диалог пуст</pre>
+        </article>
+        <article class="memory-card memory-card--wm">
+          <header class="memory-card__head">
+            <h4>WM</h4>
+            <button type="button" id="clearWmBtn" class="btn btn--ghost btn--xs">закрыть</button>
+          </header>
+          <p class="memory-card__meta" id="wmMeta">нет задачи</p>
+          <pre class="memory-card__pre" id="wmPre">—</pre>
+        </article>
+        <article class="memory-card memory-card--ltm">
+          <header class="memory-card__head">
+            <h4>LTM</h4>
+            <button type="button" id="clearLtmBtn" class="btn btn--ghost btn--xs">очистить</button>
+          </header>
+          <p class="memory-card__meta" id="ltmMeta">профиль пуст</p>
+          <pre class="memory-card__pre" id="ltmPre">—</pre>
+        </article>
+      </section>
+      </div>
+
+      <div class="nav__status">
+        <div class="nav__route">
+          <span class="nav__route-label">Роутинг</span>
+          <div id="routeList"><span class="branch-bar__empty">—</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="app comic-panel">
+      <header class="chat-bar">
+        <button type="button" id="settingsBtn" class="chat-bar__menu" title="Меню" aria-label="Открыть меню">☰</button>
+        <span class="chat-bar__title">Чат</span>
+        <div class="token-meter chat-bar__meter" id="tokenMeter" aria-live="polite">
+          <div class="token-meter__bar"><span id="tokenBarFill" class="token-meter__fill"></span></div>
+          <p class="token-meter__text" id="tokenMeterText">токены: —</p>
         </div>
       </header>
 
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
-          <img class="welcome__donut" src="/static/img/agent-logo.png" alt="" width="96" height="96">
-          <h2>Стратегии контекста</h2>
-          <p>Выбери в настройках Sliding / Facts / Branching, настрой N и сравни на сценарии «собираем ТЗ».</p>
+          <img class="welcome__donut" src="/static/img/agent-logo.png" alt="" width="56" height="56">
+          <h2>Три слоя памяти</h2>
+          <p>Диалог → STM. Задача → WM. Профиль и решения → LTM.</p>
         </div>
       </main>
 
-      <div class="branch-bar" id="branchBar" hidden>
-        <span class="branch-bar__label">Ветки:</span>
-        <div class="branch-bar__list" id="branchList"></div>
-        <button type="button" id="forkBtn" class="btn btn--ghost btn--sm">Checkpoint → 2 ветки</button>
+      <div class="net-banner" id="netBanner" hidden>
+        <span id="netBannerText">Нет интернета</span>
+        <button type="button" id="netRetryBtn" class="btn btn--accent btn--xs">Повторить</button>
       </div>
 
       <footer class="composer">
         <form id="chatForm" class="composer__form">
-          <textarea id="messageInput" class="composer__input" placeholder="Пиши сообщение…" rows="1" autofocus></textarea>
+          <textarea id="messageInput" class="composer__input" placeholder="Сообщение или #задача / #запомни…" rows="1" autofocus></textarea>
           <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
             </svg>
           </button>
         </form>
-        <p class="composer__hint" id="appSubtitle">Enter — отправить</p>
-        <div class="token-meter" id="tokenMeter" aria-live="polite">
-          <div class="token-meter__bar"><span id="tokenBarFill" class="token-meter__fill"></span></div>
-          <p class="token-meter__text" id="tokenMeterText">токены: —</p>
-        </div>
       </footer>
     </div>
-
-    <aside class="settings-panel" id="settingsPanel" aria-hidden="true">
-      <div class="settings-panel__header">
-        <h2 class="settings-panel__title">Настройки контекста</h2>
-        <button type="button" id="settingsCloseBtn" class="btn btn--ghost btn--sm">Закрыть</button>
-      </div>
-      <div class="settings-panel__body">
-        <fieldset class="settings-fieldset">
-          <legend>Стратегия</legend>
-          <label class="settings-radio"><input type="radio" name="strategyKind" value="sliding"> Sliding Window</label>
-          <label class="settings-radio"><input type="radio" name="strategyKind" value="facts"> Sticky Facts</label>
-          <label class="settings-radio"><input type="radio" name="strategyKind" value="branch"> Branching</label>
-        </fieldset>
-
-        <label class="settings-field" id="fieldSliding">
-          <span>Sliding: последние N сообщений</span>
-          <input type="number" id="slidingN" min="2" max="100" value="8">
-        </label>
-        <label class="settings-field" id="fieldFacts">
-          <span>Facts: последние N + блок facts</span>
-          <input type="number" id="factsN" min="2" max="100" value="6">
-        </label>
-        <label class="settings-field" id="fieldBranch">
-          <span>Branch: окно N (0 = вся ветка)</span>
-          <input type="number" id="branchN" min="0" max="200" value="0">
-        </label>
-
-        <button type="button" id="saveStrategyBtn" class="btn btn--primary settings-save">Сохранить</button>
-
-        <div class="facts-box" id="factsBox">
-          <h3>Текущие facts</h3>
-          <pre id="factsPre" class="facts-box__pre">—</pre>
-        </div>
-      </div>
-    </aside>
 
     <aside class="debug-panel" id="debugPanel" aria-hidden="true">
       <div class="debug-panel__header">

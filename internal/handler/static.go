@@ -51,6 +51,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/compress-demo", h.CompressDemo)
 	mux.HandleFunc("GET /api/compression", h.CompressionGet)
 	mux.HandleFunc("POST /api/compression", h.CompressionSet)
+	mux.HandleFunc("GET /api/memory", h.MemoryGet)
+	mux.HandleFunc("POST /api/memory/policy", h.MemoryPolicySet)
+	mux.HandleFunc("POST /api/memory/write", h.MemoryWrite)
+	mux.HandleFunc("POST /api/memory/demo", h.MemoryDemo)
+	mux.HandleFunc("DELETE /api/memory/{layer}", h.MemoryClear)
+	mux.HandleFunc("DELETE /api/memory", h.MemoryClear)
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {

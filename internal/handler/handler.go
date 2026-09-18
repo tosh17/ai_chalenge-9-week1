@@ -7,6 +7,7 @@ import (
 
 	"github.com/tosh17/deepseek-service/internal/agent"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
+	"github.com/tosh17/deepseek-service/internal/memory"
 	"github.com/tosh17/deepseek-service/internal/tokens"
 )
 
@@ -25,25 +26,30 @@ func NewDual(compress, full *agent.Agent, model string) *Handler {
 }
 
 type chatRequestBody struct {
-	Message  string             `json:"message"`
-	History  []deepseek.Message `json:"history,omitempty"`
-	Provider string             `json:"provider,omitempty"`
-	Compress *bool              `json:"compress,omitempty"`
+	Message   string             `json:"message"`
+	History   []deepseek.Message `json:"history,omitempty"`
+	Provider  string             `json:"provider,omitempty"`
+	Compress  *bool              `json:"compress,omitempty"`
+	InjectSTM *bool              `json:"inject_stm,omitempty"`
+	InjectWM  *bool              `json:"inject_wm,omitempty"`
+	InjectLTM *bool              `json:"inject_ltm,omitempty"`
 }
 
 type chatResponseBody struct {
-	Reply           string                 `json:"reply"`
-	Agent           string                 `json:"agent"`
-	Provider        string                 `json:"provider,omitempty"`
-	Model           string                 `json:"model,omitempty"`
-	DurationMs      int64                  `json:"duration_ms,omitempty"`
-	Tokens          *tokens.Usage          `json:"tokens,omitempty"`
-	Session         *tokens.SessionTotals  `json:"session,omitempty"`
-	Compression     *agent.CompressionInfo `json:"compression,omitempty"`
-	SummarizeEvents []agent.SummarizeEvent `json:"summarize_events,omitempty"`
-	Strategy        *agent.StrategyInfo    `json:"strategy,omitempty"`
-	FactEvents      []agent.FactUpdateEvent `json:"fact_events,omitempty"`
-	Debug           *deepseek.DebugInfo    `json:"debug,omitempty"`
+	Reply           string                   `json:"reply"`
+	Agent           string                   `json:"agent"`
+	Provider        string                   `json:"provider,omitempty"`
+	Model           string                   `json:"model,omitempty"`
+	DurationMs      int64                    `json:"duration_ms,omitempty"`
+	Tokens          *tokens.Usage            `json:"tokens,omitempty"`
+	Session         *tokens.SessionTotals    `json:"session,omitempty"`
+	Compression     *agent.CompressionInfo   `json:"compression,omitempty"`
+	SummarizeEvents []agent.SummarizeEvent   `json:"summarize_events,omitempty"`
+	Strategy        *agent.StrategyInfo      `json:"strategy,omitempty"`
+	FactEvents      []agent.FactUpdateEvent  `json:"fact_events,omitempty"`
+	Memory          *agent.MemoryInfo        `json:"memory,omitempty"`
+	RouteEvents     []agent.MemoryRouteEvent `json:"route_events,omitempty"`
+	Debug           *deepseek.DebugInfo      `json:"debug,omitempty"`
 }
 
 type errorResponseBody struct {
@@ -78,6 +84,12 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		"default_provider": h.agent.DefaultProvider(),
 		"session_tokens":   h.agent.SessionTotals(),
 		"strategy":         h.agent.Strategy(),
+		"memory_policy":    h.agent.MemoryPolicy(),
+	}
+	if layers := h.agent.Layers(); layers != nil {
+		snap := layers.Snapshot()
+		payload["memory_layers"] = snap
+		payload["memory_dir"] = layers.Dir()
 	}
 	if mem := h.agent.Memory(); mem != nil {
 		payload["memory_path"] = mem.Path()
@@ -104,6 +116,8 @@ func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
 		"session":       h.agent.SessionTotals(),
 		"context_limit": h.agent.ContextLimit(),
 		"strategy":      h.agent.Strategy(),
+		"memory":        h.agent.MemorySnapshot(),
+		"memory_policy": h.agent.MemoryPolicy(),
 	}
 	if mem := h.agent.Memory(); mem != nil {
 		payload["facts"] = mem.Facts()
@@ -141,10 +155,13 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.agent.Handle(r.Context(), agent.Request{
-		Message:  req.Message,
-		History:  req.History,
-		Provider: req.Provider,
-		Compress: req.Compress,
+		Message:   req.Message,
+		History:   req.History,
+		Provider:  req.Provider,
+		Compress:  req.Compress,
+		InjectSTM: req.InjectSTM,
+		InjectWM:  req.InjectWM,
+		InjectLTM: req.InjectLTM,
 	})
 	if err != nil {
 		var overflow *agent.ErrContextOverflow
@@ -157,6 +174,8 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 				"strategy":         result.Strategy,
 				"fact_events":      result.FactEvents,
 				"summarize_events": result.SummarizeEvents,
+				"memory":           result.Memory,
+				"route_events":     result.RouteEvents,
 			})
 			return
 		}
@@ -171,6 +190,8 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 			"strategy":         result.Strategy,
 			"fact_events":      result.FactEvents,
 			"summarize_events": result.SummarizeEvents,
+			"memory":           result.Memory,
+			"route_events":     result.RouteEvents,
 		}
 		if r.Header.Get("X-Debug") == "true" {
 			payload["debug"] = result.Debug
@@ -191,6 +212,8 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		SummarizeEvents: result.SummarizeEvents,
 		Strategy:        result.Strategy,
 		FactEvents:      result.FactEvents,
+		Memory:          result.Memory,
+		RouteEvents:     result.RouteEvents,
 	}
 	if r.Header.Get("X-Debug") == "true" {
 		body.Debug = result.Debug
@@ -314,6 +337,87 @@ func (h *Handler) CompressionSet(w http.ResponseWriter, r *http.Request) {
 		h.agent.SetCompressionEnabled(*req.Enabled)
 	}
 	h.CompressionGet(w, r)
+}
+
+func (h *Handler) MemoryGet(w http.ResponseWriter, r *http.Request) {
+	payload := map[string]any{
+		"policy": h.agent.MemoryPolicy(),
+		"memory": h.agent.MemorySnapshot(),
+		"layers": []map[string]string{
+			{"id": "short_term", "title": "Краткосрочная", "desc": "Текущий диалог. Окно STM вытесняет старые реплики."},
+			{"id": "working", "title": "Рабочая", "desc": "Данные текущей задачи: цель, ограничения, черновики."},
+			{"id": "long_term", "title": "Долговременная", "desc": "Профиль, решения, знания между сессиями."},
+		},
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (h *Handler) MemoryPolicySet(w http.ResponseWriter, r *http.Request) {
+	var req agent.MemoryPolicy
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "invalid json body"})
+		return
+	}
+	h.agent.SetMemoryPolicy(req)
+	h.MemoryGet(w, r)
+}
+
+func (h *Handler) MemoryClear(w http.ResponseWriter, r *http.Request) {
+	layer := r.PathValue("layer")
+	if layer == "" {
+		var req struct {
+			Layer string `json:"layer"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		layer = req.Layer
+	}
+	if err := h.agent.ClearLayer(layer); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: err.Error()})
+		return
+	}
+	h.MemoryGet(w, r)
+}
+
+func (h *Handler) MemoryWrite(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Layer string `json:"layer"`
+		Text  string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "layer and text are required"})
+		return
+	}
+	layers := h.agent.Layers()
+	if layers == nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "layers not enabled"})
+		return
+	}
+	var err error
+	switch req.Layer {
+	case memory.LayerWorking, "wm":
+		err = layers.ApplyWorking(memory.WorkingPatch{Goal: req.Text, Status: memory.WorkingActive, AddNotes: []string{req.Text}})
+	case memory.LayerLongTerm, "ltm":
+		err = layers.ApplyLongTerm(memory.LongTermPatch{Knowledge: []memory.KnowledgeItem{{Topic: "manual", Fact: req.Text}}})
+	default:
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "use layer=working or layer=long_term"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponseBody{Error: err.Error()})
+		return
+	}
+	h.MemoryGet(w, r)
+}
+
+func (h *Handler) MemoryDemo(w http.ResponseWriter, r *http.Request) {
+	var req providerOnlyBody
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	result, err := h.agent.RunMemoryDemo(r.Context(), req.Provider)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

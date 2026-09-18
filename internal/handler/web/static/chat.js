@@ -20,16 +20,27 @@ const settingsPanel = document.getElementById("settingsPanel");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 const saveStrategyBtn = document.getElementById("saveStrategyBtn");
 const compareBtn = document.getElementById("compareBtn");
-const slidingN = document.getElementById("slidingN");
-const factsN = document.getElementById("factsN");
-const branchN = document.getElementById("branchN");
-const factsPre = document.getElementById("factsPre");
-const branchBar = document.getElementById("branchBar");
-const branchList = document.getElementById("branchList");
-const forkBtn = document.getElementById("forkBtn");
+const injectSTM = document.getElementById("injectSTM");
+const injectWM = document.getElementById("injectWM");
+const injectLTM = document.getElementById("injectLTM");
+const stmWindow = document.getElementById("stmWindow");
+const stmMeta = document.getElementById("stmMeta");
+const stmPre = document.getElementById("stmPre");
+const wmMeta = document.getElementById("wmMeta");
+const wmPre = document.getElementById("wmPre");
+const ltmMeta = document.getElementById("ltmMeta");
+const ltmPre = document.getElementById("ltmPre");
+const routeList = document.getElementById("routeList");
+const clearStmBtn = document.getElementById("clearStmBtn");
+const clearWmBtn = document.getElementById("clearWmBtn");
+const clearLtmBtn = document.getElementById("clearLtmBtn");
+const netBanner = document.getElementById("netBanner");
+const netBannerText = document.getElementById("netBannerText");
+const netRetryBtn = document.getElementById("netRetryBtn");
 
-const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day10";
-const PROVIDER_STORAGE_KEY = "day10-chat-provider";
+const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day11";
+const PROVIDER_STORAGE_KEY = "day11-chat-provider";
+const UNSENT_STORAGE_KEY = "day11-unsent-messages";
 
 /** @type {{role: string, content: string}[]} */
 let history = [];
@@ -38,7 +49,10 @@ let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {{id: string, title: string, model: string, context_limit?: number}[]} */
 let providers = [];
-let currentStrategy = { kind: "sliding", sliding_window_n: 8, facts_window_n: 6, branch_window_n: 0 };
+let currentPolicy = { stm_window_n: 8, inject_stm: true, inject_wm: true, inject_ltm: true };
+/** @type {{text: string, userEl: HTMLElement, errorEl: HTMLElement}[]} */
+let pendingSends = [];
+let retryingQueue = false;
 
 function hideWelcome() {
   if (welcomeEl) welcomeEl.style.display = "none";
@@ -108,13 +122,19 @@ function setLoading(loading) {
   inputEl.disabled = loading;
   providerSelect.disabled = loading;
   if (compareBtn) compareBtn.disabled = loading;
-  if (forkBtn) forkBtn.disabled = loading;
   if (saveStrategyBtn) saveStrategyBtn.disabled = loading;
+  [clearStmBtn, clearWmBtn, clearLtmBtn].forEach((b) => {
+    if (b) b.disabled = loading;
+  });
+  document.querySelectorAll(".message__retry").forEach((b) => {
+    b.disabled = loading;
+  });
+  if (netRetryBtn) netRetryBtn.disabled = loading || pendingSends.length === 0;
 }
 
 function autoResizeTextarea() {
   inputEl.style.height = "auto";
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + "px";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 88) + "px";
 }
 
 function formatJSON(value) {
@@ -134,8 +154,8 @@ function setDebugMode(enabled) {
 }
 
 function setSettingsOpen(open) {
-  layoutEl.classList.toggle("layout--settings", open);
-  settingsPanel.setAttribute("aria-hidden", open ? "false" : "true");
+  layoutEl.classList.toggle("layout--nav", open);
+  if (settingsPanel) settingsPanel.setAttribute("aria-hidden", open ? "false" : "true");
 }
 
 function clearDebugLog() {
@@ -146,8 +166,48 @@ function clearDebugLog() {
 function appendDebugBlock(title, payload, extraClass = "") {
   const pre = document.createElement("pre");
   pre.className = `debug-block__code ${extraClass}`.trim();
-  pre.textContent = formatJSON(payload);
+  pre.textContent = typeof payload === "string" ? payload : formatJSON(payload);
   return `<div class="debug-block"><div class="debug-block__title">${escapeHTML(title)}</div>${pre.outerHTML}</div>`;
+}
+
+function routerDebugBlocks(responseBody) {
+  const routes = Array.isArray(responseBody?.route_events) ? responseBody.route_events : [];
+  let html = "";
+  routes.forEach((ev, i) => {
+    if (!ev || (!ev.system && !ev.prompt && !ev.raw_reply && !ev.error)) return;
+    const n = routes.length > 1 ? ` #${i + 1}` : "";
+    html += appendDebugBlock(`роутер${n} → system`, ev.system || "—");
+    html += appendDebugBlock(`роутер${n} → user`, ev.prompt || "—");
+    if (ev.error) {
+      html += appendDebugBlock(`роутер${n} ✕ ошибка`, ev.error, "debug-block__code--error");
+    }
+    html += appendDebugBlock(
+      `роутер${n} ← JSON`,
+      ev.raw_reply || "нет ответа",
+      ev.raw_reply ? "" : "debug-block__code--error",
+    );
+    html += appendDebugBlock(`роутер${n} ← запись`, {
+      source: ev.source,
+      reasons: ev.reasons,
+      working: ev.working || null,
+      long_term: ev.long_term || null,
+    });
+  });
+  return html;
+}
+
+function chatResponseForLog(responseBody) {
+  if (!responseBody || !Array.isArray(responseBody.route_events)) return responseBody;
+  return {
+    ...responseBody,
+    route_events: responseBody.route_events.map((ev) => {
+      const copy = { ...ev };
+      delete copy.system;
+      delete copy.prompt;
+      delete copy.raw_reply;
+      return copy;
+    }),
+  };
 }
 
 function logExchange({ requestBody, status, responseBody, durationMs, url = "/api/chat" }) {
@@ -163,8 +223,9 @@ function logExchange({ requestBody, status, responseBody, durationMs, url = "/ap
       <span class="debug-entry__status debug-entry__status--${status >= 200 && status < 300 ? "ok" : "err"}">${status}</span>
       <span class="debug-entry__duration">${durationMs} ms</span>
     </header>
-    ${appendDebugBlock(`→ ${url}`, { method: "POST", url, body: requestBody })}
-    ${appendDebugBlock("← ответ", responseBody, status >= 400 ? "debug-block__code--error" : "")}
+    ${routerDebugBlocks(responseBody)}
+    ${appendDebugBlock(`→ чат ${url}`, { method: "POST", url, body: requestBody })}
+    ${appendDebugBlock("← чат ответ", chatResponseForLog(responseBody), status >= 400 ? "debug-block__code--error" : "")}
   `;
   debugLog.prepend(entry);
 }
@@ -231,190 +292,167 @@ function updateTokenMeter(tokens, session) {
     ` · out ${tokens.completion || 0} · ${formatCost(tokens.cost_usd)}${sess}`;
 }
 
-function updateStrategyFieldsVisibility() {
-  const kind = document.querySelector('input[name="strategyKind"]:checked')?.value || "sliding";
-  document.getElementById("fieldSliding").style.display = kind === "sliding" ? "" : "none";
-  document.getElementById("fieldFacts").style.display = kind === "facts" ? "" : "none";
-  document.getElementById("fieldBranch").style.display = kind === "branch" ? "" : "none";
-  branchBar.hidden = kind !== "branch";
+function policyLabel(p) {
+  const on = [];
+  if (p.inject_ltm) on.push("LTM");
+  if (p.inject_wm) on.push("WM");
+  if (p.inject_stm) on.push(`STM/${p.stm_window_n || 8}`);
+  return on.length ? on.join("+") : "слои выкл";
 }
 
-function applyStrategyToForm(st) {
-  currentStrategy = st || currentStrategy;
-  const kind = currentStrategy.kind || "sliding";
-  const radio = document.querySelector(`input[name="strategyKind"][value="${kind}"]`);
-  if (radio) radio.checked = true;
-  slidingN.value = currentStrategy.sliding_window_n || 8;
-  factsN.value = currentStrategy.facts_window_n || 6;
-  branchN.value = currentStrategy.branch_window_n ?? 0;
-  strategyLabel.textContent = kind;
-  updateStrategyFieldsVisibility();
-  updateHint();
+function applyPolicyToForm(p) {
+  currentPolicy = p || currentPolicy;
+  injectSTM.checked = currentPolicy.inject_stm !== false;
+  injectWM.checked = currentPolicy.inject_wm !== false;
+  injectLTM.checked = currentPolicy.inject_ltm !== false;
+  stmWindow.value = currentPolicy.stm_window_n || 8;
+  strategyLabel.textContent = policyLabel(currentPolicy);
+  if (appSubtitle) appSubtitle.textContent = "#задача · #профиль · #решение · #запомни";
 }
 
-function updateHint() {
-  const kind = currentStrategy.kind || "sliding";
-  if (kind === "sliding") {
-    appSubtitle.textContent = `Sliding: храним только последние ${currentStrategy.sliding_window_n} сообщ.`;
-  } else if (kind === "facts") {
-    appSubtitle.textContent = `Facts: KV-память + последние ${currentStrategy.facts_window_n} сообщ.`;
-  } else {
-    appSubtitle.textContent = `Branching: checkpoint и независимые ветки (окно ${currentStrategy.branch_window_n || "вся"})`;
-  }
-}
-
-function renderFacts(facts) {
-  if (!facts || !Object.keys(facts).length) {
-    factsPre.textContent = "—";
-    return;
-  }
-  factsPre.textContent = Object.entries(facts)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}: ${v}`)
+function formatSTM(messages) {
+  if (!Array.isArray(messages) || !messages.length) return "диалог пуст";
+  return messages
+    .slice(-8)
+    .map((m) => `${m.role}: ${m.content}`)
     .join("\n");
 }
 
-function renderBranches(branches, active) {
-  branchList.innerHTML = "";
-  if (!Array.isArray(branches) || !branches.length) {
-    branchList.innerHTML = '<span class="branch-bar__empty">нет веток — сделай checkpoint</span>';
-    return;
-  }
-  for (const b of branches) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `btn btn--ghost btn--sm branch-chip${b.active || b.id === active ? " branch-chip--active" : ""}`;
-    btn.textContent = `${b.title || b.id} (${b.messages || 0})`;
-    btn.addEventListener("click", () => switchBranch(b.id));
-    branchList.appendChild(btn);
-  }
+function formatWM(w) {
+  if (!w || (!w.goal && !(w.notes || []).length && !(w.constraints || []).length)) return "нет активной задачи";
+  const lines = [];
+  if (w.status) lines.push(`статус: ${w.status}`);
+  if (w.goal) lines.push(`цель: ${w.goal}`);
+  (w.constraints || []).forEach((c) => lines.push(`огр.: ${c}`));
+  (w.notes || []).forEach((n) => lines.push(`заметка: ${n}`));
+  Object.entries(w.artifacts || {}).forEach(([k, v]) => lines.push(`${k}: ${v}`));
+  return lines.join("\n") || "—";
 }
 
-function renderFactEvents(events) {
-  if (!Array.isArray(events)) return;
+function formatLTM(lt) {
+  if (!lt) return "пусто";
+  const lines = [];
+  const p = lt.profile || {};
+  if (p.name) lines.push(`имя: ${p.name}`);
+  if (p.language) lines.push(`язык: ${p.language}`);
+  Object.entries(p.preferences || {}).forEach(([k, v]) => lines.push(`pref.${k}: ${v}`));
+  (lt.decisions || []).forEach((d) => lines.push(`решение ${d.key}: ${d.value}`));
+  (lt.knowledge || []).forEach((k) => lines.push(`[${k.topic}] ${k.fact}`));
+  return lines.join("\n") || "пусто";
+}
+
+function renderMemory(mem) {
+  if (!mem) return;
+  const stm = mem.stm_preview || mem.short_term || [];
+  const count = mem.short_term_count ?? stm.length;
+  stmMeta.textContent = `${count} сообщ. · окно ${mem.policy?.stm_window_n || currentPolicy.stm_window_n || 8}`;
+  stmPre.textContent = formatSTM(stm);
+  const wm = mem.working || {};
+  wmMeta.textContent = wm.goal ? `${wm.status || "active"} · есть задача` : "нет задачи";
+  wmPre.textContent = formatWM(wm);
+  const lt = mem.long_term || {};
+  const bits = [];
+  if (lt.profile?.name) bits.push(lt.profile.name);
+  bits.push(`реш. ${(lt.decisions || []).length}`);
+  bits.push(`знан. ${(lt.knowledge || []).length}`);
+  ltmMeta.textContent = bits.join(" · ");
+  ltmPre.textContent = formatLTM(lt);
+  if (mem.policy) applyPolicyToForm(mem.policy);
+}
+
+function renderRouteEvents(events) {
+  if (!Array.isArray(events) || !events.length) return;
+  routeList.innerHTML = "";
   for (const ev of events) {
-    const tok = ev.total_tokens || 0;
-    createMessage(
-      "system",
-      `Обновлены sticky facts (${Object.keys(ev.facts || {}).length} ключей). На извлечение: ${tok} tok · ${formatCost(ev.cost_usd)}`,
-      "message--system",
-    );
-    renderFacts(ev.facts);
+    const wrote = [];
+    if (ev.wrote_stm) wrote.push("STM");
+    if (ev.wrote_wm) wrote.push("WM");
+    if (ev.wrote_ltm) wrote.push("LTM");
+    const chip = document.createElement("span");
+    chip.className = "route-chip";
+    chip.textContent = `${ev.source || "route"} → ${wrote.join("+") || "только STM позже"}`;
+    routeList.appendChild(chip);
+    (ev.reasons || []).forEach((reason) => {
+      createMessage("system", reason, "message--system");
+    });
+    if (ev.discarded > 0) {
+      createMessage("system", `STM: вытеснено ${ev.discarded} старых реплик.`, "message--system");
+    }
   }
 }
 
-function renderStrategyMeta(strategy) {
-  if (!strategy) return;
-  if (strategy.discarded_messages > 0 && strategy.kind === "sliding") {
-    createMessage(
-      "system",
-      `Sliding: отброшено ${strategy.discarded_messages} старых сообщений. В окне осталось ${strategy.messages_in_prompt}.`,
-      "message--system",
-    );
+function renderMemoryMeta(mem) {
+  if (!mem) return;
+  renderMemory(mem);
+  if (mem.discarded > 0) {
+    createMessage("system", `STM-окно: вытеснено ${mem.discarded} реплик. В слое осталось ${mem.short_term_count}.`, "message--system");
   }
-  if (strategy.facts) renderFacts(strategy.facts);
 }
 
-async function loadStrategy() {
+async function loadMemory() {
   try {
-    const res = await fetch("/api/strategy");
+    const res = await fetch("/api/memory");
     if (!res.ok) return;
     const data = await res.json();
-    applyStrategyToForm(data.strategy);
-    renderFacts(data.facts);
-    renderBranches(data.branches, data.active_branch);
+    if (data.policy) applyPolicyToForm(data.policy);
+    renderMemory(data.memory);
   } catch {
     /* ignore */
   }
 }
 
-async function saveStrategy() {
-  const kind = document.querySelector('input[name="strategyKind"]:checked')?.value || "sliding";
+async function savePolicy() {
   const body = {
-    kind,
-    sliding_window_n: Number(slidingN.value) || 8,
-    facts_window_n: Number(factsN.value) || 6,
-    branch_window_n: Number(branchN.value) || 0,
+    stm_window_n: Number(stmWindow.value) || 8,
+    inject_stm: injectSTM.checked,
+    inject_wm: injectWM.checked,
+    inject_ltm: injectLTM.checked,
   };
   setLoading(true);
   try {
-    const res = await fetch("/api/strategy", {
+    const res = await fetch("/api/memory/policy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!res.ok) {
-      createMessage("assistant", data.error || "Не удалось сохранить стратегию", "message--error");
+      createMessage("assistant", data.error || "Не удалось сохранить политику", "message--error");
       return;
     }
-    applyStrategyToForm(data.strategy);
-    renderFacts(data.facts);
-    renderBranches(data.branches, data.active_branch);
-    createMessage("system", `Стратегия: ${data.strategy.kind}`, "message--system");
+    applyPolicyToForm(data.policy);
+    renderMemory(data.memory);
+    createMessage("system", `Политика памяти: ${policyLabel(data.policy)}`, "message--system");
   } catch {
-    createMessage("assistant", "Не удалось сохранить стратегию", "message--error");
+    createMessage("assistant", "Не удалось сохранить политику", "message--error");
   } finally {
     setLoading(false);
   }
 }
 
-async function forkBranches() {
+async function clearLayer(layer, reloadChat) {
   setLoading(true);
   try {
-    const res = await fetch("/api/branch/fork", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title_a: "Ветка A", title_b: "Ветка B" }),
-    });
+    const res = await fetch(`/api/memory/${layer}`, { method: "DELETE" });
     const data = await res.json();
     if (!res.ok) {
-      createMessage("assistant", data.error || "Fork не удался", "message--error");
+      createMessage("assistant", data.error || "Не удалось очистить слой", "message--error");
       return;
     }
-    renderBranches(data.branches, data.active_branch);
-    createMessage(
-      "system",
-      `Checkpoint @${data.checkpoint_at ?? "?"} · созданы ветки A/B. Активна: ${data.active_branch}`,
-      "message--system",
-    );
+    renderMemory(data.memory);
+    if (data.policy) applyPolicyToForm(data.policy);
+    if (reloadChat) {
+      history = [];
+      chatEl.innerHTML = "";
+      if (welcomeEl) {
+        welcomeEl.style.display = "";
+        chatEl.appendChild(welcomeEl);
+      }
+      updateTokenMeter(null, null);
+    }
+    createMessage("system", `Очищен слой: ${layer}`, "message--system");
   } catch {
-    createMessage("assistant", "Fork не удался", "message--error");
-  } finally {
-    setLoading(false);
-  }
-}
-
-async function switchBranch(id) {
-  setLoading(true);
-  try {
-    const res = await fetch("/api/branch/switch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ branch: id }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      createMessage("assistant", data.error || "Не удалось переключить ветку", "message--error");
-      return;
-    }
-    history = [];
-    chatEl.innerHTML = "";
-    if (welcomeEl) {
-      welcomeEl.style.display = "";
-      chatEl.appendChild(welcomeEl);
-    }
-    const messages = Array.isArray(data.messages) ? data.messages : [];
-    for (const m of messages) {
-      if (m?.role && m?.content) createMessage(m.role, m.content);
-    }
-    history = messages.filter((m) => m.role === "user" || m.role === "assistant");
-    renderBranches(data.branches, data.active_branch);
-    renderFacts(data.facts);
-    updateTokenMeter(data.tokens, data.session);
-    createMessage("system", `Переключились на ветку ${data.active_branch}`, "message--system");
-  } catch {
-    createMessage("assistant", "Не удалось переключить ветку", "message--error");
+    createMessage("assistant", "Не удалось очистить слой", "message--error");
   } finally {
     setLoading(false);
   }
@@ -430,9 +468,8 @@ async function loadHistory() {
       .filter((m) => m && (m.role === "user" || m.role === "assistant") && m.content)
       .map((m) => ({ role: m.role, content: m.content }));
     updateTokenMeter(data.tokens, data.session);
-    if (data.strategy) applyStrategyToForm(data.strategy);
-    renderFacts(data.facts);
-    renderBranches(data.branches, data.active_branch);
+    if (data.memory) renderMemory(data.memory);
+    if (data.memory_policy) applyPolicyToForm(data.memory_policy);
     if (!history.length) return;
     for (const m of history) createMessage(m.role, m.content);
   } catch {
@@ -453,11 +490,136 @@ async function loadProviders() {
   }
 }
 
-async function sendMessage(text) {
-  createMessage("user", text);
+function isBrowserOffline() {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+function isRetryableFailure(status, err, data) {
+  if (isBrowserOffline()) return true;
+  if (!status) return true;
+  if (status === 429 || status === 502 || status === 503 || status === 504) return true;
+  const msg = String((data && data.error) || (err && err.message) || err || "").toLowerCase();
+  return /failed to fetch|networkerror|connection reset|reset by peer|i\/o timeout|no route|connection refused|tls handshake|unavailable|timeout|eof/.test(msg);
+}
+
+function persistUnsent() {
+  try {
+    sessionStorage.setItem(UNSENT_STORAGE_KEY, JSON.stringify(pendingSends.map((p) => p.text)));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function updateNetBanner() {
+  if (!netBanner || !netBannerText) return;
+  const offline = isBrowserOffline();
+  if (!offline && pendingSends.length === 0) {
+    netBanner.hidden = true;
+    return;
+  }
+  netBanner.hidden = false;
+  if (offline && pendingSends.length) {
+    netBannerText.textContent = `Нет интернета · не отправлено: ${pendingSends.length}`;
+  } else if (offline) {
+    netBannerText.textContent = "Нет интернета. Сообщение можно отправить позже.";
+  } else {
+    netBannerText.textContent = `Нет связи · не отправлено: ${pendingSends.length}`;
+  }
+  if (netRetryBtn) netRetryBtn.disabled = isLoading || pendingSends.length === 0;
+}
+
+function dropPending(userEl) {
+  const item = pendingSends.find((p) => p.userEl === userEl);
+  if (item?.errorEl) item.errorEl.remove();
+  pendingSends = pendingSends.filter((p) => p.userEl !== userEl);
+  userEl.classList.remove("message--unsent");
+  persistUnsent();
+  updateNetBanner();
+}
+
+function showNetworkError(text, userEl, message) {
+  dropPending(userEl);
+  userEl.classList.add("message--unsent");
+  const errorEl = document.createElement("div");
+  errorEl.className = "message message--assistant message--error message--retry";
+  errorEl.innerHTML = `
+    <div class="message__avatar">AI</div>
+    <div class="message__body">
+      <div class="message__bubble">${escapeHTML(message)}</div>
+      <button type="button" class="btn btn--accent btn--sm message__retry">Повторить</button>
+    </div>
+  `;
+  const btn = errorEl.querySelector(".message__retry");
+  btn.disabled = isLoading;
+  btn.addEventListener("click", () => {
+    if (isLoading) return;
+    sendMessage(text, { userEl, errorEl });
+  });
+  chatEl.appendChild(errorEl);
+  pendingSends.push({ text, userEl, errorEl });
+  persistUnsent();
+  updateNetBanner();
+  scrollToBottom();
+}
+
+function networkErrorText(err, data) {
+  if (isBrowserOffline()) {
+    return "Нет интернета. Сообщение не отправлено — нажмите «Повторить» или дождитесь сети.";
+  }
+  const raw = (data && data.error) || (err && err.message) || String(err || "");
+  if (/failed to fetch|networkerror/i.test(String(err))) {
+    return "Нет связи с сервером. Проверьте интернет и нажмите «Повторить».";
+  }
+  if (raw) {
+    return `${raw}\nМожно повторить отправку.`;
+  }
+  return "Сеть недоступна. Можно повторить отправку.";
+}
+
+function restoreUnsent() {
+  let texts = [];
+  try {
+    texts = JSON.parse(sessionStorage.getItem(UNSENT_STORAGE_KEY) || "[]");
+  } catch {
+    texts = [];
+  }
+  if (!Array.isArray(texts) || !texts.length) return;
+  for (const text of texts) {
+    if (typeof text !== "string" || !text.trim()) continue;
+    const userEl = createMessage("user", text);
+    showNetworkError(text, userEl, "Сообщение не отправлено. Повторите, когда будет сеть.");
+  }
+}
+
+async function retryPendingSends() {
+  if (retryingQueue || isLoading || !pendingSends.length) return;
+  retryingQueue = true;
+  try {
+    while (pendingSends.length) {
+      if (isBrowserOffline()) break;
+      const next = pendingSends[0];
+      const before = next.userEl;
+      await sendMessage(next.text, { userEl: next.userEl, errorEl: next.errorEl });
+      const stillFailed = pendingSends.some((p) => p.userEl === before);
+      if (stillFailed) break;
+    }
+  } finally {
+    retryingQueue = false;
+  }
+}
+
+async function sendMessage(text, opts = {}) {
+  const userEl = opts.userEl || createMessage("user", text);
+  dropPending(userEl);
   setLoading(true);
   createTypingIndicator();
-  const requestBody = { message: text, provider: currentProvider() };
+  const requestBody = {
+    message: text,
+    provider: currentProvider(),
+    inject_stm: injectSTM.checked,
+    inject_wm: injectWM.checked,
+    inject_ltm: injectLTM.checked,
+  };
   const started = performance.now();
   try {
     const headers = { "Content-Type": "application/json" };
@@ -467,28 +629,33 @@ async function sendMessage(text) {
       headers,
       body: JSON.stringify(requestBody),
     });
-    const data = await res.json();
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {
+      data = { error: `Ответ сервера не JSON (HTTP ${res.status})` };
+    }
     const durationMs = Math.round(performance.now() - started);
     removeTypingIndicator();
     logExchange({ requestBody, status: res.status, responseBody: data, durationMs });
     if (!res.ok) {
       updateTokenMeter(data.tokens, data.session);
+      if (isRetryableFailure(res.status, null, data)) {
+        showNetworkError(text, userEl, networkErrorText(null, data));
+        return;
+      }
       createMessage("assistant", data.error || "Ошибка", "message--error", {
         durationMs: data.duration_ms ?? durationMs,
       });
       return;
     }
-    renderFactEvents(data.fact_events);
+    renderRouteEvents(data.route_events);
     createMessage("assistant", data.reply, "", { durationMs: data.duration_ms ?? durationMs });
-    renderStrategyMeta(data.strategy);
+    renderMemoryMeta(data.memory);
     history.push({ role: "user", content: text });
     history.push({ role: "assistant", content: data.reply });
     updateTokenMeter(data.tokens, data.session);
-    if (data.strategy) {
-      currentStrategy.kind = data.strategy.kind || currentStrategy.kind;
-      strategyLabel.textContent = currentStrategy.kind;
-    }
-    await loadStrategy();
+    await loadMemory();
   } catch (err) {
     removeTypingIndicator();
     logExchange({
@@ -497,7 +664,7 @@ async function sendMessage(text) {
       responseBody: { error: String(err) },
       durationMs: Math.round(performance.now() - started),
     });
-    createMessage("assistant", "Не удалось связаться с сервером.", "message--error");
+    showNetworkError(text, userEl, networkErrorText(err, null));
   } finally {
     setLoading(false);
     inputEl.focus();
@@ -506,12 +673,12 @@ async function sendMessage(text) {
 
 async function runCompare() {
   setLoading(true);
-  createMessage("user", "Сравни 3 стратегии на сценарии «собираем ТЗ»");
+  createMessage("user", "Демо: посеять слои, вытеснить STM и сравнить ответы");
   createTypingIndicator();
   const requestBody = { provider: currentProvider() };
   const started = performance.now();
   try {
-    const res = await fetch("/api/strategy/compare", {
+    const res = await fetch("/api/memory/demo", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
@@ -519,15 +686,15 @@ async function runCompare() {
     const data = await res.json();
     const durationMs = Math.round(performance.now() - started);
     removeTypingIndicator();
-    logExchange({ url: "/api/strategy/compare", requestBody, status: res.status, responseBody: data, durationMs });
+    logExchange({ url: "/api/memory/demo", requestBody, status: res.status, responseBody: data, durationMs });
     if (!res.ok) {
-      createMessage("assistant", data.error || "Сравнение упало", "message--error", { durationMs });
+      createMessage("assistant", data.error || "Демо упало", "message--error", { durationMs });
       return;
     }
     createMessage("assistant", data.report || JSON.stringify(data, null, 2), "message--mono", { durationMs });
   } catch {
     removeTypingIndicator();
-    createMessage("assistant", "Не удалось сравнить стратегии.", "message--error");
+    createMessage("assistant", "Не удалось запустить демо слоёв.", "message--error");
   } finally {
     setLoading(false);
   }
@@ -550,36 +717,24 @@ inputEl.addEventListener("keydown", (e) => {
 });
 inputEl.addEventListener("input", autoResizeTextarea);
 
-clearBtn.addEventListener("click", async () => {
-  try {
-    await fetch("/api/history", { method: "DELETE" });
-  } catch {
-    /* ui clear anyway */
-  }
-  history = [];
-  chatEl.innerHTML = "";
-  if (welcomeEl) {
-    welcomeEl.style.display = "";
-    chatEl.appendChild(welcomeEl);
-  }
-  updateTokenMeter(null, null);
-  renderFacts(null);
-  renderBranches([], "");
-  inputEl.focus();
+clearBtn.addEventListener("click", () => {
+  if (!isLoading) clearLayer("short_term", true);
+});
+clearStmBtn.addEventListener("click", () => {
+  if (!isLoading) clearLayer("short_term", true);
+});
+clearWmBtn.addEventListener("click", () => {
+  if (!isLoading) clearLayer("working", false);
+});
+clearLtmBtn.addEventListener("click", () => {
+  if (!isLoading) clearLayer("long_term", false);
 });
 
-settingsBtn.addEventListener("click", () => setSettingsOpen(!layoutEl.classList.contains("layout--settings")));
+settingsBtn.addEventListener("click", () => setSettingsOpen(!layoutEl.classList.contains("layout--nav")));
 settingsCloseBtn.addEventListener("click", () => setSettingsOpen(false));
-saveStrategyBtn.addEventListener("click", saveStrategy);
+saveStrategyBtn.addEventListener("click", savePolicy);
 compareBtn.addEventListener("click", () => {
   if (!isLoading) runCompare();
-});
-forkBtn.addEventListener("click", () => {
-  if (!isLoading) forkBranches();
-});
-
-document.querySelectorAll('input[name="strategyKind"]').forEach((el) => {
-  el.addEventListener("change", updateStrategyFieldsVisibility);
 });
 
 providerSelect.addEventListener("change", () => {
@@ -589,5 +744,21 @@ providerSelect.addEventListener("change", () => {
 debugToggle.addEventListener("change", () => setDebugMode(debugToggle.checked));
 clearDebugBtn.addEventListener("click", clearDebugLog);
 
+if (netRetryBtn) {
+  netRetryBtn.addEventListener("click", () => {
+    if (!isLoading) retryPendingSends();
+  });
+}
+window.addEventListener("online", () => {
+  updateNetBanner();
+  retryPendingSends();
+});
+window.addEventListener("offline", updateNetBanner);
+
 setDebugMode(debugEnabled);
-Promise.all([loadProviders(), loadStrategy(), loadHistory()]).then(() => inputEl.focus());
+setSettingsOpen(true);
+updateNetBanner();
+Promise.all([loadProviders(), loadMemory(), loadHistory()]).then(() => {
+  restoreUnsent();
+  inputEl.focus();
+});

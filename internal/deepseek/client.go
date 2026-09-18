@@ -3,10 +3,15 @@ package deepseek
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -66,10 +71,25 @@ func NewClient(apiKey, model, baseURL string) *Client {
 		apiKey:  apiKey,
 		model:   model,
 		baseURL: baseURL,
-		http: &http.Client{
-			// 0 = без лимита: ждём ответ модели сколько нужно.
-			Timeout: 0,
-		},
+		http:    newHTTPClient(),
+	}
+}
+
+// newHTTPClient обходит баг macOS Security.framework (x509 OSStatus -26276):
+// проверяем цепочку корнями из CertPool в Go, а не через SecTrustEvaluate.
+func newHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if roots, err := x509.SystemCertPool(); err == nil && roots != nil {
+		tlsCfg.RootCAs = roots
+	}
+	transport.TLSClientConfig = tlsCfg
+	transport.TLSHandshakeTimeout = 15 * time.Second
+	// Короткий TCP-connect: если LAN LLM мёртв, не ждём 30с DefaultTransport.
+	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	return &http.Client{
+		Timeout:   0,
+		Transport: transport,
 	}
 }
 
@@ -100,7 +120,7 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (ChatResult, erro
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ChatResult{Debug: debug}, fmt.Errorf("do request: %w", err)
+		return ChatResult{Debug: debug}, fmt.Errorf("do request: %w", wrapNet(err))
 	}
 	defer resp.Body.Close()
 
@@ -136,4 +156,47 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (ChatResult, erro
 		Usage: result.Usage,
 		Debug: debug,
 	}, nil
+}
+
+func wrapNet(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "OSStatus") {
+		return fmt.Errorf("%w (macOS Keychain TLS; нужен перезапуск сервера с Go-корнями сертификатов)", err)
+	}
+	if strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "connection refused") || strings.Contains(msg, "no route to host") {
+		return fmt.Errorf("%w (LLM-хост недоступен; подними локальный сервер или выбери DeepSeek)", err)
+	}
+	return err
+}
+
+// Ping проверяет TCP до API без вызова модели.
+func (c *Client) Ping(ctx context.Context) error {
+	return pingHTTPURL(ctx, c.baseURL)
+}
+
+func pingHTTPURL(ctx context.Context, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	host := u.Host
+	if host == "" {
+		return fmt.Errorf("empty host in %q", raw)
+	}
+	if u.Port() == "" {
+		port := "80"
+		if u.Scheme == "https" {
+			port = "443"
+		}
+		host = net.JoinHostPort(u.Hostname(), port)
+	}
+	d := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", host)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
 }

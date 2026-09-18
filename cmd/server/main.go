@@ -1,3 +1,5 @@
+//go:debug x509usefallbackroots=1
+
 package main
 
 import (
@@ -17,15 +19,21 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	store, err := memory.Open(cfg.ChatHistoryPath)
+	layers, err := memory.OpenLayers(cfg.MemoryDir)
 	if err != nil {
-		log.Fatalf("memory: %v", err)
+		log.Fatalf("memory layers: %v", err)
 	}
-	log.Printf("chat memory: %s (%d messages)", store.Path(), store.Len())
+	log.Printf("memory layers: %s (stm=%d wm=%s ltm=%q)", layers.Dir(), layers.ShortTermLen(), layers.Working().Status, layers.LongTerm().Profile.Name)
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day10-chat-agent").
-		WithMemory(store).
+	chatAgent := agent.New("day11-memory-agent").
+		WithLayers(layers).
+		WithMemoryPolicy(agent.MemoryPolicy{
+			STMWindowN: cfg.STMWindowN,
+			InjectSTM:  cfg.InjectSTM,
+			InjectWM:   cfg.InjectWM,
+			InjectLTM:  cfg.InjectLTM,
+		}).
 		WithContextLimit(cfg.ContextTokenLimit).
 		WithStrategy(agent.ContextStrategy{
 			Kind:           cfg.StrategyKind,
@@ -52,10 +60,11 @@ func main() {
 
 	addr := ":" + cfg.Port
 	st := chatAgent.Strategy()
+	mp := chatAgent.MemoryPolicy()
 	log.Printf(
-		"server listening on %s (agent: %s, default: %s, strategy: %s sliding=%d facts=%d branch=%d)",
+		"server listening on %s (agent: %s, default: %s, layers stm_window=%d inject stm=%v wm=%v ltm=%v, strategy: %s)",
 		addr, chatAgent.Name(), chatAgent.DefaultProvider(),
-		st.Kind, st.SlidingWindowN, st.FactsWindowN, st.BranchWindowN,
+		mp.STMWindowN, mp.InjectSTM, mp.InjectWM, mp.InjectLTM, st.Kind,
 	)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)

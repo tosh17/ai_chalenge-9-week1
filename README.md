@@ -1,23 +1,57 @@
-# Day 6 · Simple Chat Agent
+# Day 11 · Модель памяти агента
 
-Веб-чат на Go, где **агент — отдельная сущность**: он принимает запрос пользователя,
-вызывает LLM через HTTP API и возвращает ответ в интерфейс.
+Веб-чат на Go, где у агента **явная трёхслойная память**. Слои хранятся в разных JSON-файлах,
+роутинг «что куда писать» делается правилами (префиксы / эвристика) и LLM-классификатором,
+а в промпт каждый слой подмешивается отдельно.
 
-## Архитектура
+## Три слоя
+
+| Слой | Что хранит | Файл | Живёт пока |
+| --- | --- | --- | --- |
+| **Краткосрочная (STM)** | текущий диалог | `data/memory/short-term.json` | окно N реплик; «Новый диалог» |
+| **Рабочая (WM)** | данные текущей задачи: цель, ограничения, заметки, артефакты | `data/memory/working.json` | задача не завершена |
+| **Долговременная (LTM)** | профиль, решения, знания | `data/memory/long-term.json` | пока не очистить LTM |
+
+## Как выбирается слой
+
+1. Реплика **всегда** попадает в STM после ответа (это диалог).
+2. Явный префикс пользователя:
+   - `#задача …` → WM
+   - `#профиль Имя` → LTM.профиль
+   - `#решение ключ = значение` → LTM.решения
+   - `#знание тема: факт` / `#запомни …` → LTM.знания
+3. Иначе LLM-маршрутизатор раскладывает реплику по WM/LTM и пишет `reasons`.
+4. Если LLM не смог — эвристика (имя, «предпочитаю», «задача/ТЗ/бюджет», «решение/запомни»).
+
+В UI под чатом виден роутинг хода: `llm → WM+LTM` и системные строки «почему».
+
+## Как слой влияет на ответ
+
+Промпт собирается так:
 
 ```
-UI / HTTP handler  →  agent.Agent.Handle()  →  deepseek.Client (LLM API)
+system: роль + правила слоёв
+system: === ДОЛГОВРЕМЕННАЯ ===  (если inject_ltm)
+system: === РАБОЧАЯ ===         (если inject_wm)
+user/assistant: последние N STM (если inject_stm)
+user: текущая реплика
 ```
 
-- `internal/agent` — инкапсуляция логики запрос/ответ
-- `internal/deepseek` — HTTP-клиент к модели
-- `internal/handler` — только транспорт (web + JSON API)
+Сними галку «в промпт» у слоя — факт останется в файле, но модель его не увидит.
+Кнопка **Демо слоёв** сеет профиль/задачу/решения, вытесняет STM окном=6 и задаёт один probe
+при четырёх политиках: все слои / без STM / без WM / без LTM.
+
+Ожидание:
+
+- без **LTM** пропадают имя, устойчивый стек, контакт;
+- без **WM** пропадают цель и бюджет, если STM уже вытеснил начало;
+- без **STM** пропадает дословное начало диалога, но профиль и задача остаются.
 
 ## Быстрый старт
 
 ```bash
 cp .env.example .env
-# укажите DEEPSEEK_API_KEY
+# DEEPSEEK_API_KEY и/или LOCAL_*
 
 export $(grep -v '^#' .env | xargs)
 go run ./cmd/server
@@ -29,26 +63,31 @@ go run ./cmd/server
 
 ### `POST /api/chat`
 
-```bash
-curl -X POST http://localhost:8080/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Привет! Кто ты?"}'
-```
+Тело: `{ "message", "provider?", "inject_stm?", "inject_wm?", "inject_ltm?" }`.
 
-Ответ включает `reply`, `agent`, `duration_ms`.
+Ответ дополнительно содержит `memory` и `route_events`.
 
-### `GET /health`
+### `GET /api/memory` · `POST /api/memory/policy`
 
-```bash
-curl http://localhost:8080/health
-```
+Снимок трёх слоёв и политика (окно STM, флаги inject).
+
+### `DELETE /api/memory/{short_term|working|long_term|all}`
+
+Очистка одного слоя. «Новый диалог» чистит только STM.
+
+### `POST /api/memory/write`
+
+Явная запись: `{ "layer": "working"|"long_term", "text": "…" }`.
+
+### `POST /api/memory/demo`
+
+Сценарий сравнения влияния слоёв.
 
 ## Структура
 
 ```
-cmd/server/           — точка входа, сборка Agent + HTTP
-internal/agent/       — сущность агента (Handle / buildMessages)
-internal/deepseek/    — клиент LLM API
-internal/handler/     — HTTP + web UI
-internal/config/      — env
+cmd/server/              — сборка Agent + HTTP
+internal/agent/          — Handle, роутинг слоёв, сборка промпта
+internal/memory/layers.go — три отдельных JSON-хранилища
+internal/handler/        — API + UI панели слоёв
 ```
