@@ -50,6 +50,7 @@ type WorkingState struct {
 	Constraints []string          `json:"constraints,omitempty"`
 	Notes       []string          `json:"notes,omitempty"`
 	Artifacts   map[string]string `json:"artifacts,omitempty"`
+	Task        TaskState         `json:"task"`
 	UpdatedAt   string            `json:"updated_at,omitempty"`
 }
 
@@ -94,7 +95,7 @@ func OpenLayers(dir string) (*Layers, error) {
 		stmPath: filepath.Join(dir, "short-term.json"),
 		wmPath:  filepath.Join(dir, "working.json"),
 		ltmPath: filepath.Join(dir, "long-term.json"),
-		working: WorkingState{Status: WorkingIdle, Artifacts: map[string]string{}},
+		working: WorkingState{Status: WorkingIdle, Artifacts: map[string]string{}, Task: TaskState{Stage: StageIdle}},
 		longTerm: LongTermState{
 			Profile: Profile{Preferences: map[string]string{}},
 		},
@@ -132,8 +133,8 @@ func (l *Layers) loadWorking() error {
 	if err := readJSONFile(l.wmPath, &payload); err != nil {
 		return err
 	}
-	if payload.Status == "" && payload.Goal == "" && len(payload.Notes) == 0 && len(payload.Artifacts) == 0 {
-		l.working = WorkingState{Status: WorkingIdle, Artifacts: map[string]string{}}
+	if payload.Status == "" && payload.Goal == "" && len(payload.Notes) == 0 && len(payload.Artifacts) == 0 && payload.Task.Empty() {
+		l.working = WorkingState{Status: WorkingIdle, Artifacts: map[string]string{}, Task: TaskState{Stage: StageIdle}}
 		return nil
 	}
 	if payload.Status == "" {
@@ -141,6 +142,13 @@ func (l *Layers) loadWorking() error {
 	}
 	if payload.Artifacts == nil {
 		payload.Artifacts = map[string]string{}
+	}
+	payload.Task.Stage = NormalizeStage(payload.Task.Stage)
+	if payload.Goal != "" && payload.Task.Stage == StageIdle {
+		payload.Task.Stage = StagePlanning
+		if payload.Task.Expect == "" {
+			payload.Task.Expect = defaultExpect(StagePlanning)
+		}
 	}
 	l.working = payload.WorkingState
 	return nil
@@ -283,28 +291,45 @@ func (l *Layers) AppendShortTerm(windowN int, msgs ...deepseek.Message) (discard
 	return discarded, writeJSONFile(l.stmPath, shortTermFile{Messages: l.shortTerm})
 }
 
-// ApplyWorking мержит патч в рабочую память. complete=true сбрасывает задачу.
+// ApplyWorking мержит патч в рабочую память. complete=true закрывает задачу (этап done).
 func (l *Layers) ApplyWorking(patch WorkingPatch) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if patch.Complete {
-		l.working = WorkingState{Status: WorkingDone, Artifacts: map[string]string{}, UpdatedAt: nowISO()}
-		return writeJSONFile(l.wmPath, workingFile{WorkingState: l.working})
-	}
 	if l.working.Artifacts == nil {
 		l.working.Artifacts = map[string]string{}
 	}
+	ev := strings.TrimSpace(patch.Event)
+	if patch.Complete {
+		ev = TaskFinish
+	}
+	started := false
 	if patch.Goal != "" {
 		l.working.Goal = patch.Goal
-		if l.working.Status == "" || l.working.Status == WorkingIdle || l.working.Status == WorkingDone {
-			l.working.Status = WorkingActive
-		}
 		if l.working.TaskID == "" {
 			l.working.TaskID = "task-" + fmt.Sprintf("%d", time.Now().Unix())
+		}
+		st := NormalizeStage(l.working.Task.Stage)
+		if st == StageIdle || st == StageDone {
+			if ev == "" {
+				ev = TaskStart
+			}
+			started = true
+		}
+	}
+	if ev != "" || patch.Stage != "" || patch.Step != "" || patch.Expect != "" || patch.StepIndex > 0 || len(patch.AddDone) > 0 {
+		next, err := ApplyTaskEvent(l.working.Task, ev, patch)
+		if err != nil {
+			return err
+		}
+		l.working.Task = next
+		if started && l.working.Task.Stage == StageIdle {
+			l.working.Task.Stage = StagePlanning
 		}
 	}
 	if patch.Status != "" {
 		l.working.Status = patch.Status
+	} else {
+		l.working.Status = statusFromTask(l.working.Task)
 	}
 	if len(patch.Constraints) > 0 {
 		l.working.Constraints = appendUnique(l.working.Constraints, patch.Constraints...)
@@ -325,7 +350,27 @@ func (l *Layers) ApplyWorking(patch WorkingPatch) error {
 	return writeJSONFile(l.wmPath, workingFile{WorkingState: l.working})
 }
 
-// WorkingPatch — явное обновление рабочей памяти.
+func statusFromTask(t TaskState) string {
+	switch NormalizeStage(t.Stage) {
+	case StageDone:
+		return WorkingDone
+	case StageIdle:
+		return WorkingIdle
+	default:
+		if t.Paused {
+			return "paused"
+		}
+		return WorkingActive
+	}
+}
+
+// ApplyTask — явное событие автомата (пауза, продолжение, смена этапа).
+func (l *Layers) ApplyTask(ev string, patch WorkingPatch) error {
+	patch.Event = ev
+	return l.ApplyWorking(patch)
+}
+
+// WorkingPatch — явное обновление рабочей памяти и автомата задачи.
 type WorkingPatch struct {
 	Goal        string            `json:"goal,omitempty"`
 	Status      string            `json:"status,omitempty"`
@@ -333,6 +378,12 @@ type WorkingPatch struct {
 	AddNotes    []string          `json:"add_notes,omitempty"`
 	Artifacts   map[string]string `json:"artifacts,omitempty"`
 	Complete    bool              `json:"complete,omitempty"`
+	Event       string            `json:"event,omitempty"`
+	Stage       string            `json:"stage,omitempty"`
+	Step        string            `json:"step,omitempty"`
+	StepIndex   int               `json:"step_index,omitempty"`
+	Expect      string            `json:"expect,omitempty"`
+	AddDone     []string          `json:"add_done,omitempty"`
 }
 
 // LongTermPatch — явное обновление долговременной памяти.
@@ -390,7 +441,7 @@ func (l *Layers) ClearShortTerm() error {
 func (l *Layers) ClearWorking() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.working = WorkingState{Status: WorkingIdle, Artifacts: map[string]string{}}
+	l.working = WorkingState{Status: WorkingIdle, Artifacts: map[string]string{}, Task: TaskState{Stage: StageIdle}}
 	return writeJSONFile(l.wmPath, workingFile{WorkingState: l.working})
 }
 
@@ -425,6 +476,7 @@ func cloneWorking(in WorkingState) WorkingState {
 	for k, v := range in.Artifacts {
 		out.Artifacts[k] = v
 	}
+	out.Task = cloneTask(in.Task)
 	return out
 }
 

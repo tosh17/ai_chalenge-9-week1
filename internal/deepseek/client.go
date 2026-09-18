@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -75,15 +74,13 @@ func NewClient(apiKey, model, baseURL string) *Client {
 	}
 }
 
-// newHTTPClient обходит баг macOS Security.framework (x509 OSStatus -26276):
-// проверяем цепочку корнями из CertPool в Go, а не через SecTrustEvaluate.
+// newHTTPClient обходит баг macOS Security.framework (x509 OSStatus -26276).
+// RootCAs не задаём: SystemCertPool() на Darwin — это Keychain (systemPool),
+// а не Go-корни. Проверку делает crypto/x509 + fallback из
+// //go:debug x509usefallbackroots=1 в cmd/server.
 func newHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if roots, err := x509.SystemCertPool(); err == nil && roots != nil {
-		tlsCfg.RootCAs = roots
-	}
-	transport.TLSClientConfig = tlsCfg
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	transport.TLSHandshakeTimeout = 15 * time.Second
 	// Короткий TCP-connect: если LAN LLM мёртв, не ждём 30с DefaultTransport.
 	transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext

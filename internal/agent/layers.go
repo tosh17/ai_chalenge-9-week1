@@ -13,11 +13,13 @@ import (
 	"github.com/tosh17/deepseek-service/internal/tokens"
 )
 
-const memorySystemPrompt = `Ты агент с явной трёхслойной памятью.
+const memorySystemPrompt = `Ты агент с явной трёхслойной памятью и конечным автоматом задачи.
 Используй слои так:
 - ДОЛГОВРЕМЕННАЯ: профиль, решения, знания — считай их истиной между сессиями.
 - РАБОЧАЯ: данные текущей задачи — цель, ограничения, черновики. Если слоя нет, задачи нет.
+- СОСТОЯНИЕ ЗАДАЧИ: фаза строго по порядку планирование → выполнение → проверка → готово.
 - КРАТКОСРОЧНАЯ: только недавний диалог; старые реплики могли быть вытеснены окном.
+Работай только в текущей фазе. Не перескакивай. Этап ставит система по собранным данным, пользователь его не выбирает.
 Если в слое нет факта — не выдумывай его из «общей эрудиции диалога». Отвечай на языке пользователя.`
 
 const memoryRouterSystem = `Ты маршрутизатор памяти. Отвечай только валидным JSON-объектом.`
@@ -264,7 +266,8 @@ func (a *Agent) memorySnapshot(policy MemoryPolicy) MemoryInfo {
 	info.STMPreview = lastN(snap.ShortTerm, policy.STMWindowN)
 	info.Working = snap.Working
 	info.LongTerm = snap.LongTerm
-	info.WorkingActive = snap.Working.Status == memory.WorkingActive && snap.Working.Goal != ""
+	st := memory.NormalizeStage(snap.Working.Task.Stage)
+	info.WorkingActive = snap.Working.Goal != "" && st != memory.StageIdle && st != memory.StageDone
 	info.Paths = snap.Paths
 	if a.profiles != nil {
 		info.Profile = a.profiles.Active()
@@ -305,6 +308,7 @@ func (a *Agent) buildMessagesLayers(userMsg string, policy MemoryPolicy) ([]deep
 	}
 	if policy.InjectWM && a.layers != nil {
 		out = append(out, deepseek.Message{Role: "system", Content: formatWorkingBlock(info.Working)})
+		out = append(out, deepseek.Message{Role: "system", Content: memory.FormatTaskBlock(info.Working.Task)})
 	}
 
 	stmCount := 0
@@ -424,6 +428,7 @@ func (a *Agent) routeToLayers(ctx context.Context, providerID, userMsg string) (
 		if err := a.applyRoute(decision, &ev); err != nil {
 			return ev, err
 		}
+		a.autoAdvanceTask(userMsg, &ev)
 		return ev, nil
 	}
 
@@ -446,7 +451,31 @@ func (a *Agent) routeToLayers(ctx context.Context, providerID, userMsg string) (
 	if err := a.applyRoute(decision, &ev); err != nil {
 		return ev, err
 	}
+	a.autoAdvanceTask(userMsg, &ev)
 	return ev, nil
+}
+
+func (a *Agent) autoAdvanceTask(userMsg string, ev *MemoryRouteEvent) {
+	if a.layers == nil {
+		return
+	}
+	before := a.layers.Working().Task
+	patch := memory.InferTaskPatch(a.layers.Working(), userMsg)
+	if !workingPatchUseful(patch) {
+		return
+	}
+	if err := a.layers.ApplyWorking(patch); err != nil {
+		ev.Reasons = append(ev.Reasons, "автоэтап: "+err.Error())
+		return
+	}
+	after := a.layers.Working().Task
+	ev.WroteWM = true
+	if ev.Working == nil {
+		ev.Working = &patch
+	}
+	if before.Stage != after.Stage || before.Paused != after.Paused {
+		ev.Reasons = append(ev.Reasons, "автоэтап: "+memory.StageTitle(before.Stage)+" → "+memory.StageTitle(after.Stage)+" · шаг «"+after.Step+"»")
+	}
 }
 
 func heurFillsGaps(llm, h routeDecision) bool {
@@ -573,7 +602,8 @@ func mergeReasons(base, extra []string) []string {
 }
 
 func workingPatchUseful(p memory.WorkingPatch) bool {
-	return p.Complete || p.Goal != "" || p.Status != "" || len(p.Constraints) > 0 || len(p.AddNotes) > 0 || len(p.Artifacts) > 0
+	return p.Complete || p.Goal != "" || p.Status != "" || p.Event != "" || p.Stage != "" || p.Step != "" || p.Expect != "" ||
+		p.StepIndex > 0 || len(p.AddDone) > 0 || len(p.Constraints) > 0 || len(p.AddNotes) > 0 || len(p.Artifacts) > 0
 }
 
 func longTermPatchUseful(p memory.LongTermPatch) bool {
@@ -589,6 +619,12 @@ var (
 	rePrefixStyle      = regexp.MustCompile(`(?i)^#стиль\s+`)
 	rePrefixFormat     = regexp.MustCompile(`(?i)^#формат\s+`)
 	rePrefixConstraint = regexp.MustCompile(`(?i)^#ограничение\s+`)
+	rePrefixPause      = regexp.MustCompile(`(?i)^#(?:пауза|pause)(?:\s|$)`)
+	rePrefixResume     = regexp.MustCompile(`(?i)^#(?:продолжи|продолжай|resume)(?:\s|$)`)
+	rePrefixAdvance    = regexp.MustCompile(`(?i)^#(?:дальше|этап\+|advance)(?:\s|$)`)
+	rePrefixStage      = regexp.MustCompile(`(?i)^#этап\s+`)
+	rePrefixStep       = regexp.MustCompile(`(?i)^#шаг\s+`)
+	rePrefixExpect     = regexp.MustCompile(`(?i)^#ожидаю\s+`)
 	reName             = regexp.MustCompile(`(?i)(?:меня зовут|зови меня|моё имя|мое имя)\s+([A-Za-zА-Яа-яЁё-]{2,40})`)
 	reNameYa           = regexp.MustCompile(`(?i)(?:^|[\s,.;!?])я\s+([A-Za-zА-Яа-яЁё-]{2,40})(?:$|[\s,.;!?])`)
 	rePrefers          = regexp.MustCompile(`(?i)(?:предпочитаю|давай всегда|отвечай)\s+(.{3,80})`)
@@ -605,6 +641,39 @@ var (
 func parseExplicitRoute(msg string) (routeDecision, string) {
 	trim := strings.TrimSpace(msg)
 	switch {
+	case rePrefixPause.MatchString(trim):
+		return routeDecision{
+			Working: &memory.WorkingPatch{Event: memory.TaskPause},
+			Reasons: []string{"задача: явный префикс #пауза — стоп на текущем этапе"},
+		}, "prefix"
+	case rePrefixResume.MatchString(trim):
+		return routeDecision{
+			Working: &memory.WorkingPatch{Event: memory.TaskResume},
+			Reasons: []string{"задача: явный префикс #продолжи — снять паузу без смены этапа"},
+		}, "prefix"
+	case rePrefixAdvance.MatchString(trim):
+		return routeDecision{
+			Working: &memory.WorkingPatch{Event: memory.TaskAdvance},
+			Reasons: []string{"задача: явный префикс #дальше — следующий этап автомата"},
+		}, "prefix"
+	case rePrefixStage.MatchString(trim):
+		body := strings.TrimSpace(rePrefixStage.ReplaceAllString(trim, ""))
+		return routeDecision{
+			Working: &memory.WorkingPatch{Event: memory.TaskSet, Stage: body},
+			Reasons: []string{"задача: явный префикс #этап"},
+		}, "prefix"
+	case rePrefixStep.MatchString(trim):
+		body := strings.TrimSpace(rePrefixStep.ReplaceAllString(trim, ""))
+		return routeDecision{
+			Working: &memory.WorkingPatch{Event: memory.TaskSet, Step: body},
+			Reasons: []string{"задача: явный префикс #шаг"},
+		}, "prefix"
+	case rePrefixExpect.MatchString(trim):
+		body := strings.TrimSpace(rePrefixExpect.ReplaceAllString(trim, ""))
+		return routeDecision{
+			Working: &memory.WorkingPatch{Event: memory.TaskSet, Expect: body},
+			Reasons: []string{"задача: явный префикс #ожидаю"},
+		}, "prefix"
 	case rePrefixWM.MatchString(trim):
 		body := strings.TrimSpace(rePrefixWM.ReplaceAllString(trim, ""))
 		return routeDecision{
@@ -737,6 +806,20 @@ func heuristicRoute(msg string) (routeDecision, string) {
 		}
 	}
 
+	looksPause := strings.Contains(low, "на паузу") || strings.Contains(low, "поставь паузу") ||
+		strings.HasPrefix(low, "пауза") || strings.HasPrefix(low, "подожди") ||
+		strings.HasPrefix(low, "остановись") || strings.Contains(low, "сделаем паузу")
+	if looksPause {
+		d.Working = &memory.WorkingPatch{Event: memory.TaskPause, AddNotes: []string{"пауза: " + msg}}
+		d.Reasons = append(d.Reasons, "задача: пауза на текущем этапе")
+	}
+	looksResume := strings.HasPrefix(low, "продолж") || strings.Contains(low, "снимай паузу") ||
+		strings.Contains(low, "без повтора") || strings.Contains(low, "не повторяй") && strings.Contains(low, "дальше")
+	if looksResume && !looksPause {
+		d.Working = &memory.WorkingPatch{Event: memory.TaskResume, AddNotes: []string{"resume: " + msg}}
+		d.Reasons = append(d.Reasons, "задача: продолжить с текущего шага")
+	}
+
 	looksTask := strings.Contains(low, "задача") || strings.Contains(low, "тз") ||
 		strings.Contains(low, "цель") || strings.Contains(low, "бюджет") ||
 		strings.Contains(low, "срок") || strings.Contains(low, "проект") ||
@@ -792,8 +875,12 @@ func buildMemoryRouterPrompt(userMsg string, wm memory.WorkingState, lt memory.L
 	var prompt strings.Builder
 	prompt.WriteString("Разложи реплику пользователя по слоям памяти агента.\n")
 	prompt.WriteString("Верни ТОЛЬКО JSON без markdown:\n")
-	prompt.WriteString(`{"working":{"goal":"","status":"","constraints":[],"add_notes":[],"artifacts":{},"complete":false},"long_term":{"profile_name":"","language":"","preferences":{},"decisions":[{"key":"","value":"","why":""}],"knowledge":[{"topic":"","fact":""}]},"reasons":["слой: почему"]}` + "\n")
+	prompt.WriteString(`{"working":{"goal":"","status":"","event":"","stage":"","step":"","expect":"","add_done":[],"constraints":[],"add_notes":[],"artifacts":{},"complete":false},"long_term":{"profile_name":"","language":"","preferences":{},"decisions":[{"key":"","value":"","why":""}],"knowledge":[{"topic":"","fact":""}]},"reasons":["слой: почему"]}` + "\n")
 	prompt.WriteString("Правила выбора слоя:\n")
+	prompt.WriteString("- working: только данные ТЕКУЩЕЙ задачи (цель, ограничения, черновик, статус). Этап НЕ ставь: stage и event=advance/start оставь пустыми — автомат выставит фазу сам.\n")
+	prompt.WriteString("- event только pause | resume. complete=true только при явном «закрываем / принимаю / всё сделано».\n")
+	prompt.WriteString("- «пауза/подожди» → event=pause. «продолжи» → event=resume (этап и шаг не менять).\n")
+	prompt.WriteString("- черновики и результаты клади в artifacts, не в stage.\n")
 	prompt.WriteString("- working: только данные ТЕКУЩЕЙ задачи (цель, ограничения, черновик, статус). Не профиль.\n")
 	prompt.WriteString("- long_term: профиль (имя, стиль, чем занимается), устойчивые решения, знания на другие задачи.\n")
 	prompt.WriteString("- Пример: «Привет, я Антон, занимаюсь умным домом, хочу сделать дом умнее» → long_term.profile_name=Антон, knowledge occupation, working.goal=сделать умный дом.\n")
@@ -857,6 +944,20 @@ func (a *Agent) llmRoute(ctx context.Context, providerID, userMsg string) (route
 func sanitizeWorking(p *memory.WorkingPatch) *memory.WorkingPatch {
 	if p == nil {
 		return nil
+	}
+	ev := strings.ToLower(strings.TrimSpace(p.Event))
+	switch ev {
+	case memory.TaskPause, memory.TaskResume:
+		p.Stage = ""
+		p.Complete = false
+	default:
+		// Этап принадлежит автомату, не маршрутизатору.
+		p.Event = ""
+		p.Stage = ""
+		p.Step = ""
+		p.Expect = ""
+		p.AddDone = nil
+		p.Complete = false
 	}
 	if !workingPatchUseful(*p) {
 		return nil

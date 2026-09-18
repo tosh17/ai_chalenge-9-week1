@@ -195,7 +195,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 			"memory":           result.Memory,
 			"route_events":     result.RouteEvents,
 		}
-		if r.Header.Get("X-Debug") == "true" {
+		if result.Debug != nil {
 			payload["debug"] = result.Debug
 		}
 		writeJSON(w, http.StatusBadGateway, payload)
@@ -216,9 +216,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		FactEvents:      result.FactEvents,
 		Memory:          result.Memory,
 		RouteEvents:     result.RouteEvents,
-	}
-	if r.Header.Get("X-Debug") == "true" {
-		body.Debug = result.Debug
+		Debug:           result.Debug,
 	}
 	writeJSON(w, http.StatusOK, body)
 }
@@ -348,7 +346,7 @@ func (h *Handler) MemoryGet(w http.ResponseWriter, r *http.Request) {
 		"profiles": h.profilePayload(),
 		"layers": []map[string]string{
 			{"id": "short_term", "title": "Краткосрочная", "desc": "Текущий диалог. Окно STM вытесняет старые реплики."},
-			{"id": "working", "title": "Рабочая", "desc": "Данные текущей задачи: цель, ограничения, черновики."},
+			{"id": "working", "title": "Рабочая", "desc": "Данные текущей задачи и конечный автомат: этап, шаг, ожидание, пауза."},
 			{"id": "long_term", "title": "Долговременная", "desc": "Профиль-факты, решения, знания между сессиями."},
 		},
 	}
@@ -417,6 +415,52 @@ func (h *Handler) ProfileDemo(w http.ResponseWriter, r *http.Request) {
 	var req providerOnlyBody
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	result, err := h.agent.RunProfileDemo(r.Context(), req.Provider)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) TaskEvent(w http.ResponseWriter, r *http.Request) {
+	var req memory.WorkingPatch
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "invalid json body"})
+		return
+	}
+	layers := h.agent.Layers()
+	if layers == nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "layers not enabled"})
+		return
+	}
+	if req.Event == "" && req.Stage == "" && req.Step == "" && req.Expect == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "event, stage, step or expect is required"})
+		return
+	}
+	if err := layers.ApplyWorking(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: err.Error()})
+		return
+	}
+	h.MemoryGet(w, r)
+}
+
+func (h *Handler) TaskSeed(w http.ResponseWriter, r *http.Request) {
+	layers := h.agent.Layers()
+	if layers == nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "layers not enabled"})
+		return
+	}
+	if err := agent.SeedExampleTask(layers); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponseBody{Error: err.Error()})
+		return
+	}
+	h.MemoryGet(w, r)
+}
+
+func (h *Handler) TaskDemo(w http.ResponseWriter, r *http.Request) {
+	var req providerOnlyBody
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	result, err := h.agent.RunTaskDemo(r.Context(), req.Provider)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
 		return

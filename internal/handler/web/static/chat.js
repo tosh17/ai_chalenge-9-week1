@@ -38,6 +38,16 @@ const addConstraintBtn = document.getElementById("addConstraintBtn");
 const profileMeta = document.getElementById("profileMeta");
 const saveProfileBtn = document.getElementById("saveProfileBtn");
 const profileDemoBtn = document.getElementById("profileDemoBtn");
+const taskStage = document.getElementById("taskStage");
+const taskStep = document.getElementById("taskStep");
+const taskExpect = document.getElementById("taskExpect");
+const taskMeta = document.getElementById("taskMeta");
+const taskPauseBtn = document.getElementById("taskPauseBtn");
+const taskResumeBtn = document.getElementById("taskResumeBtn");
+const taskAdvanceBtn = document.getElementById("taskAdvanceBtn");
+const taskSaveBtn = document.getElementById("taskSaveBtn");
+const taskSeedBtn = document.getElementById("taskSeedBtn");
+const taskDemoBtn = document.getElementById("taskDemoBtn");
 const stmWindow = document.getElementById("stmWindow");
 const stmMeta = document.getElementById("stmMeta");
 const stmPre = document.getElementById("stmPre");
@@ -60,6 +70,8 @@ const UNSENT_STORAGE_KEY = "day12-unsent-messages";
 /** @type {{role: string, content: string}[]} */
 let history = [];
 let isLoading = false;
+let chatAbort = null;
+let chatGen = 0;
 let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {{id: string, title: string, model: string, context_limit?: number}[]} */
@@ -106,9 +118,11 @@ function createMessage(role, content, extraClass = "", meta = {}) {
   const timeLabel = !isUser && !isSystem && meta.durationMs != null
     ? `<span class="message__time">${escapeHTML(formatDuration(meta.durationMs))}</span>`
     : "";
+  const trace = !isUser && !isSystem ? buildTraceHTML(meta) : "";
   el.innerHTML = `
     <div class="message__avatar">${avatar}</div>
     <div class="message__body">
+      ${trace}
       <div class="message__bubble">${escapeHTML(content)}</div>
       ${timeLabel}
     </div>
@@ -116,6 +130,138 @@ function createMessage(role, content, extraClass = "", meta = {}) {
   chatEl.appendChild(el);
   scrollToBottom();
   return el;
+}
+
+function humanStage(stage) {
+  switch (String(stage || "").toLowerCase()) {
+    case "planning":
+      return "планирование";
+    case "execution":
+      return "выполнение";
+    case "validation":
+      return "проверка";
+    case "done":
+      return "готово";
+    case "idle":
+    case "":
+      return "нет задачи";
+    default:
+      return String(stage);
+  }
+}
+
+function phaseTitle(task) {
+  const name = humanStage(task && task.stage);
+  const cap = name.charAt(0).toUpperCase() + name.slice(1);
+  if (task && task.paused && name !== "нет задачи") return `${cap} · пауза`;
+  return cap;
+}
+
+function phaseLead(task) {
+  const t = task || {};
+  if (t.paused) {
+    return `Сейчас пауза на фазе «${humanStage(t.stage)}». Этап не двигаю, жду продолжения.`;
+  }
+  const step = (t.step || "").trim();
+  switch (String(t.stage || "").toLowerCase()) {
+    case "planning":
+      return step
+        ? `Фаза — планирование. Сейчас: ${step}.`
+        : "Фаза — планирование. Собираю цель и план.";
+    case "execution":
+      return step
+        ? `Фаза — выполнение. Сейчас: ${step}.`
+        : "Фаза — выполнение. Иду по согласованному плану.";
+    case "validation":
+      return step
+        ? `Фаза — проверка. Сейчас: ${step}.`
+        : "Фаза — проверка. Смотрю, всё ли сходится.";
+    case "done":
+      return "Фаза — готово. Задачу закрыл.";
+    default:
+      return "Пока нет активной задачи — если напишете цель, начну с планирования.";
+  }
+}
+
+function humanizeReason(raw) {
+  let s = String(raw || "").trim();
+  if (!s) return "";
+  const auto = s.match(/автоэтап:\s*([a-z_]+)\s*→\s*([a-z_]+)(?:\s*·\s*шаг\s*[«"]([^»"]+)[»"])?/i);
+  if (auto) {
+    let line = `Сменил фазу: ${humanStage(auto[1])} → ${humanStage(auto[2])}`;
+    if (auto[3]) line += `. Шаг: ${auto[3]}`;
+    return line;
+  }
+  if (/llm_fallback/i.test(s)) {
+    return "Классификатор памяти не ответил, пошёл по простым правилам";
+  }
+  if (/^STM:/i.test(s) || /реплика текущего диалога/i.test(s)) {
+    return "Оставил реплику в текущем диалоге";
+  }
+  s = s.replace(/^профиль:\s*/i, "Профиль: ");
+  s = s.replace(/^long_term:\s*/i, "");
+  s = s.replace(/^LTM:\s*/i, "");
+  s = s.replace(/^working(?:\.[a-zA-Z_]+)?(?:=[^:]*)?:\s*/i, "");
+  s = s.replace(/working\.stage=([a-z]+)/gi, (_, st) => `фаза «${humanStage(st)}»`);
+  s = s.replace(/\bstage=([a-z]+)/gi, (_, st) => `фаза «${humanStage(st)}»`);
+  s = s.replace(/\bstatus=active\b/gi, "задача активна");
+  s = s.replace(/\bstatus=idle\b/gi, "задачи нет");
+  s = s.replace(/\bstatus=done\b/gi, "задача закрыта");
+  return s.replace(/\s+/g, " ").trim();
+}
+
+function memoryWrites(routes) {
+  const tags = new Set();
+  for (const ev of routes) {
+    if (ev.wrote_stm) tags.add("диалог");
+    if (ev.wrote_wm) tags.add("текущую задачу");
+    if (ev.wrote_ltm) tags.add("долгую память");
+    if (ev.wrote_profile) tags.add("профиль");
+  }
+  return [...tags];
+}
+
+function buildTraceHTML(meta) {
+  const routes = Array.isArray(meta.routeEvents) ? meta.routeEvents : [];
+  const debug = meta.debug;
+  const task = meta.task || {};
+  const reasons = routes.flatMap((r) => r.reasons || []);
+  const hasRouter = routes.some((r) => r.prompt || r.raw_reply || r.system);
+  if (!reasons.length && !debug && !task.stage && !hasRouter) return "";
+  const title = phaseTitle(task);
+  const humanReasons = [...new Set(reasons.map(humanizeReason).filter(Boolean))];
+  const writes = memoryWrites(routes);
+  let body = `<p class="trace__lead">${escapeHTML(phaseLead(task))}</p>`;
+  if (task.expect) {
+    body += `<p class="trace__expect">Жду: ${escapeHTML(task.expect)}</p>`;
+  }
+  if (humanReasons.length) {
+    body += `<section class="trace__sec"><h4>Что учёл</h4><ul>${humanReasons
+      .map((r) => `<li>${escapeHTML(r)}</li>`)
+      .join("")}</ul></section>`;
+  }
+  if (writes.length) {
+    body += `<p class="trace__wrote">Обновил: ${escapeHTML(writes.join(", "))}</p>`;
+  }
+  let raw = "";
+  for (const r of routes) {
+    if (!r.system && !r.prompt && !r.raw_reply) continue;
+    raw += `<section class="trace__sec"><h4>Классификатор памяти</h4>`;
+    if (r.system) raw += `<pre>${escapeHTML(r.system)}</pre>`;
+    if (r.prompt) raw += `<pre>${escapeHTML(r.prompt)}</pre>`;
+    if (r.raw_reply) raw += `<pre>${escapeHTML(r.raw_reply)}</pre>`;
+    raw += `</section>`;
+  }
+  if (debug && (debug.request || debug.response)) {
+    raw += `<section class="trace__sec"><h4>Запрос к модели</h4>`;
+    if (debug.request) raw += `<pre>${escapeHTML(formatJSON(debug.request))}</pre>`;
+    if (debug.response) raw += `<pre>${escapeHTML(formatJSON(debug.response))}</pre>`;
+    raw += `</section>`;
+  }
+  if (raw) {
+    body += `<details class="trace-raw"><summary>Технические подробности</summary>${raw}</details>`;
+  }
+  return `<details class="trace"><summary><span class="trace__phase">${escapeHTML(title)}</span></summary><div class="trace__body">${body}</div></details>`;
 }
 
 function createTypingIndicator() {
@@ -138,16 +284,10 @@ function removeTypingIndicator() {
 
 function setLoading(loading) {
   isLoading = loading;
-  sendBtn.disabled = loading;
-  inputEl.disabled = loading;
-  providerSelect.disabled = loading;
-  if (compareBtn) compareBtn.disabled = loading;
   if (saveStrategyBtn) saveStrategyBtn.disabled = loading;
   if (saveProfileBtn) saveProfileBtn.disabled = loading;
   if (profileDemoBtn) profileDemoBtn.disabled = loading;
-  document.querySelectorAll(".profile-form input, .profile-form select, .profile-form textarea, .profile-form button").forEach((el) => {
-    el.disabled = loading;
-  });
+  if (taskDemoBtn) taskDemoBtn.disabled = loading;
   [clearStmBtn, clearWmBtn, clearLtmBtn].forEach((b) => {
     if (b) b.disabled = loading;
   });
@@ -180,7 +320,10 @@ function setDebugMode(enabled) {
 
 function setSettingsOpen(open) {
   layoutEl.classList.toggle("layout--nav", open);
+  layoutEl.classList.toggle("layout--settings", open);
   if (settingsPanel) settingsPanel.setAttribute("aria-hidden", open ? "false" : "true");
+  const backdrop = document.getElementById("settingsBackdrop");
+  if (backdrop) backdrop.hidden = !open;
 }
 
 function clearDebugLog() {
@@ -346,8 +489,15 @@ function formatSTM(messages) {
 }
 
 function formatWM(w) {
-  if (!w || (!w.goal && !(w.notes || []).length && !(w.constraints || []).length)) return "нет активной задачи";
+  if (!w || (!w.goal && !(w.notes || []).length && !(w.constraints || []).length && !(w.task && w.task.stage && w.task.stage !== "idle"))) {
+    return "нет активной задачи";
+  }
   const lines = [];
+  const t = w.task || {};
+  if (t.stage) lines.push(`этап: ${t.stage}${t.paused ? " · ПАУЗА" : ""}`);
+  if (t.step) lines.push(`шаг: ${t.step}`);
+  if (t.expect) lines.push(`ожидаю: ${t.expect}`);
+  (t.done_so_far || []).forEach((s) => lines.push(`сделано: ${s}`));
   if (w.status) lines.push(`статус: ${w.status}`);
   if (w.goal) lines.push(`цель: ${w.goal}`);
   (w.constraints || []).forEach((c) => lines.push(`огр.: ${c}`));
@@ -375,8 +525,12 @@ function renderMemory(mem) {
   stmMeta.textContent = `${count} сообщ. · окно ${mem.policy?.stm_window_n || currentPolicy.stm_window_n || 8}`;
   stmPre.textContent = formatSTM(stm);
   const wm = mem.working || {};
-  wmMeta.textContent = wm.goal ? `${wm.status || "active"} · есть задача` : "нет задачи";
+  const t = wm.task || {};
+  wmMeta.textContent = wm.goal
+    ? `${t.stage || wm.status || "active"}${t.paused ? " · пауза" : ""} · есть задача`
+    : "нет задачи";
   wmPre.textContent = formatWM(wm);
+  fillTaskForm(wm);
   const lt = mem.long_term || {};
   const bits = [];
   if (lt.profile?.name) bits.push(lt.profile.name);
@@ -474,6 +628,40 @@ function fillProfileForm(p, id) {
   }
   const title = document.querySelector(".chat-bar__title");
   if (title) title.textContent = p.name ? `Чат · ${p.name}` : "Чат";
+}
+
+function phaseRank(stage) {
+  switch (String(stage || "").toLowerCase()) {
+    case "planning": return 1;
+    case "execution": return 2;
+    case "validation": return 3;
+    case "done": return 4;
+    default: return 0;
+  }
+}
+
+function fillTaskForm(w) {
+  const t = (w && w.task) || {};
+  const hasTask = !!(w && w.goal);
+  const stage = hasTask ? String(t.stage || "planning").toLowerCase() : "idle";
+  const track = document.getElementById("phaseTrack");
+  if (track) {
+    track.classList.toggle("phase-track--paused", !!(hasTask && t.paused));
+    track.querySelectorAll("[data-phase]").forEach((el) => {
+      const ph = el.getAttribute("data-phase");
+      const r = phaseRank(ph);
+      const cur = phaseRank(stage);
+      el.classList.toggle("is-current", hasTask && r === cur);
+      el.classList.toggle("is-done", hasTask && r > 0 && r < cur);
+    });
+  }
+  if (taskMeta) {
+    if (!hasTask) {
+      taskMeta.textContent = "нет задачи";
+    } else {
+      taskMeta.textContent = [humanStage(t.stage), t.paused ? "пауза" : ""].filter(Boolean).join(" · ");
+    }
+  }
 }
 
 function renderProfileBook(data) {
@@ -591,7 +779,62 @@ async function runProfileDemo() {
   }
 }
 
+async function postTask(url, body, label) {
+  if (isLoading) return;
+  setLoading(true);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : "{}",
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      createMessage("assistant", data.error || label, "message--error");
+      return;
+    }
+    if (data.memory) renderMemory(data.memory);
+    else renderMemory(data);
+    const t = (data.memory && data.memory.working && data.memory.working.task) || (data.working && data.working.task) || {};
+    createMessage("system", `${label}: ${t.stage || "—"}${t.paused ? " · пауза" : ""} · ${t.step || t.expect || ""}`.trim(), "message--system");
+  } catch {
+    createMessage("assistant", label, "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function runTaskDemo() {
+  setLoading(true);
+  createMessage("user", "Демо: пауза на execution, затем продолжение без повторного плана");
+  createTypingIndicator();
+  const requestBody = { provider: currentProvider() };
+  const started = performance.now();
+  try {
+    const res = await fetch("/api/task/demo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    const data = await res.json();
+    const durationMs = Math.round(performance.now() - started);
+    removeTypingIndicator();
+    logExchange({ url: "/api/task/demo", requestBody, status: res.status, responseBody: data, durationMs });
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Демо паузы упало", "message--error", { durationMs });
+      return;
+    }
+    createMessage("assistant", data.report || JSON.stringify(data, null, 2), "message--mono", { durationMs });
+  } catch {
+    removeTypingIndicator();
+    createMessage("assistant", "Не удалось запустить демо паузы.", "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
+
 function renderRouteEvents(events) {
+  if (!routeList) return;
   if (!Array.isArray(events) || !events.length) return;
   routeList.innerHTML = "";
   for (const ev of events) {
@@ -602,14 +845,8 @@ function renderRouteEvents(events) {
     if (ev.wrote_profile) wrote.push("PROF");
     const chip = document.createElement("span");
     chip.className = "route-chip";
-    chip.textContent = `${ev.source || "route"} → ${wrote.join("+") || "только STM позже"}`;
+    chip.textContent = `${ev.source || "route"} → ${wrote.join("+") || "STM"}`;
     routeList.appendChild(chip);
-    (ev.reasons || []).forEach((reason) => {
-      createMessage("system", reason, "message--system");
-    });
-    if (ev.discarded > 0) {
-      createMessage("system", `STM: вытеснено ${ev.discarded} старых реплик.`, "message--system");
-    }
   }
 }
 
@@ -843,26 +1080,40 @@ async function retryPendingSends() {
 }
 
 async function sendMessage(text, opts = {}) {
+  if (chatAbort) {
+    chatAbort.abort();
+    const typing = document.getElementById("typingIndicator");
+    if (typing) {
+      typing.classList.remove("message--typing");
+      typing.classList.add("message--interrupted");
+      const bubble = typing.querySelector(".message__bubble");
+      if (bubble) bubble.textContent = "Прервано новым сообщением";
+      typing.removeAttribute("id");
+    }
+  }
   const userEl = opts.userEl || createMessage("user", text);
   dropPending(userEl);
+  const ac = new AbortController();
+  const gen = ++chatGen;
+  chatAbort = ac;
   setLoading(true);
   createTypingIndicator();
   const requestBody = {
     message: text,
     provider: currentProvider(),
-    inject_stm: injectSTM.checked,
-    inject_wm: injectWM.checked,
-    inject_ltm: injectLTM.checked,
+    inject_stm: injectSTM ? injectSTM.checked : true,
+    inject_wm: injectWM ? injectWM.checked : true,
+    inject_ltm: injectLTM ? injectLTM.checked : true,
     inject_profile: injectProfile ? injectProfile.checked : true,
   };
   const started = performance.now();
   try {
-    const headers = { "Content-Type": "application/json" };
-    if (debugEnabled) headers["X-Debug"] = "true";
+    const headers = { "Content-Type": "application/json", "X-Debug": "true" };
     const res = await fetch("/api/chat", {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
+      signal: ac.signal,
     });
     let data = {};
     try {
@@ -881,17 +1132,26 @@ async function sendMessage(text, opts = {}) {
       }
       createMessage("assistant", data.error || "Ошибка", "message--error", {
         durationMs: data.duration_ms ?? durationMs,
+        routeEvents: data.route_events,
+        debug: data.debug,
+        task: data.memory?.working?.task,
       });
       return;
     }
     renderRouteEvents(data.route_events);
-    createMessage("assistant", data.reply, "", { durationMs: data.duration_ms ?? durationMs });
+    createMessage("assistant", data.reply, "", {
+      durationMs: data.duration_ms ?? durationMs,
+      routeEvents: data.route_events,
+      debug: data.debug,
+      task: data.memory?.working?.task,
+    });
     renderMemoryMeta(data.memory);
     history.push({ role: "user", content: text });
     history.push({ role: "assistant", content: data.reply });
     updateTokenMeter(data.tokens, data.session);
     await loadMemory();
   } catch (err) {
+    if (err.name === "AbortError") return;
     removeTypingIndicator();
     logExchange({
       requestBody,
@@ -901,8 +1161,11 @@ async function sendMessage(text, opts = {}) {
     });
     showNetworkError(text, userEl, networkErrorText(err, null));
   } finally {
-    setLoading(false);
-    inputEl.focus();
+    if (gen === chatGen) {
+      chatAbort = null;
+      setLoading(false);
+      inputEl.focus();
+    }
   }
 }
 
@@ -938,7 +1201,7 @@ async function runCompare() {
 formEl.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = inputEl.value.trim();
-  if (!text || isLoading) return;
+  if (!text) return;
   inputEl.value = "";
   autoResizeTextarea();
   sendMessage(text);
@@ -967,6 +1230,13 @@ clearLtmBtn.addEventListener("click", () => {
 
 settingsBtn.addEventListener("click", () => setSettingsOpen(!layoutEl.classList.contains("layout--nav")));
 settingsCloseBtn.addEventListener("click", () => setSettingsOpen(false));
+const settingsBackdrop = document.getElementById("settingsBackdrop");
+if (settingsBackdrop) {
+  settingsBackdrop.addEventListener("click", () => setSettingsOpen(false));
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") setSettingsOpen(false);
+});
 saveStrategyBtn.addEventListener("click", savePolicy);
 if (saveProfileBtn) saveProfileBtn.addEventListener("click", saveProfile);
 compareBtn.addEventListener("click", () => {
@@ -975,6 +1245,28 @@ compareBtn.addEventListener("click", () => {
 if (profileDemoBtn) {
   profileDemoBtn.addEventListener("click", () => {
     if (!isLoading) runProfileDemo();
+  });
+}
+if (taskDemoBtn) {
+  taskDemoBtn.addEventListener("click", () => {
+    if (!isLoading) runTaskDemo();
+  });
+}
+if (taskPauseBtn) taskPauseBtn.addEventListener("click", () => postTask("/api/task/event", { event: "pause" }, "Пауза"));
+if (taskResumeBtn) taskResumeBtn.addEventListener("click", () => postTask("/api/task/event", { event: "resume" }, "Продолжить"));
+if (taskAdvanceBtn) taskAdvanceBtn.addEventListener("click", () => postTask("/api/task/event", { event: "advance" }, "Дальше"));
+if (taskSaveBtn) {
+  taskSaveBtn.addEventListener("click", () => postTask("/api/task/event", {
+    event: "set",
+    stage: taskStage ? taskStage.value : "",
+    step: taskStep ? taskStep.value.trim() : "",
+    expect: taskExpect ? taskExpect.value.trim() : "",
+  }, "Шаг сохранён"));
+}
+if (taskSeedBtn) taskSeedBtn.addEventListener("click", () => postTask("/api/task/seed", {}, "Пример задачи"));
+if (taskStage) {
+  taskStage.addEventListener("change", () => {
+    if (!isLoading) postTask("/api/task/event", { event: "set", stage: taskStage.value }, "Этап");
   });
 }
 if (profileSelect) {
@@ -1015,7 +1307,7 @@ window.addEventListener("online", () => {
 window.addEventListener("offline", updateNetBanner);
 
 setDebugMode(debugEnabled);
-setSettingsOpen(true);
+setSettingsOpen(false);
 updateNetBanner();
 Promise.all([loadProviders(), loadMemory(), loadHistory(), loadProfiles()]).then(() => {
   restoreUnsent();

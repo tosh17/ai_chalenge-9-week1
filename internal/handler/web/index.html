@@ -3,28 +3,70 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Springfield Agent — Day12 Persona</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=day12-fields3">
+  <title>Agent</title>
+  <link rel="stylesheet" href="/static/style.css?v=day13-phases">
 </head>
 <body>
-  <div class="sky" aria-hidden="true"></div>
-  <div class="layout layout--nav" id="layout">
-    <aside class="nav" id="settingsPanel" aria-hidden="false">
-      <div class="nav__brand">
-        <img class="nav__logo" src="/static/img/agent-logo.png" alt="" width="36" height="36">
-        <div class="nav__brand-text">
-          <strong>Springfield</strong>
-          <span>Day12 · персона</span>
+  <div class="layout" id="layout">
+    <div class="app">
+      <header class="chat-bar">
+        <button type="button" id="settingsBtn" class="chat-bar__menu" title="Настройки" aria-label="Открыть настройки">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.7 1 1.2 1.5 1.2H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+        <span class="chat-bar__title" id="chatTitle">Чат</span>
+        <nav class="phase-track" id="phaseTrack" aria-label="Фазы задачи">
+          <span data-phase="planning">планирование</span>
+          <span class="phase-track__arrow" aria-hidden="true">→</span>
+          <span data-phase="execution">выполнение</span>
+          <span class="phase-track__arrow" aria-hidden="true">→</span>
+          <span data-phase="validation">проверка</span>
+          <span class="phase-track__arrow" aria-hidden="true">→</span>
+          <span data-phase="done">готово</span>
+        </nav>
+        <span class="task-pill" id="taskMeta" hidden>нет задачи</span>
+        <div class="token-meter chat-bar__meter" id="tokenMeter" aria-live="polite">
+          <div class="token-meter__bar"><span id="tokenBarFill" class="token-meter__fill"></span></div>
+          <p class="token-meter__text" id="tokenMeterText"></p>
         </div>
-        <button type="button" id="settingsCloseBtn" class="nav__collapse" title="Свернуть меню" aria-label="Свернуть меню">‹</button>
+      </header>
+
+      <main class="chat" id="chat">
+        <div class="welcome" id="welcome">
+          <h2>Ассистент</h2>
+          <p>Пишите задачу — этап выставится сам. Новое сообщение прерывает текущий ответ. Рассуждения — в аккордеоне у реплики.</p>
+        </div>
+      </main>
+
+      <div class="net-banner" id="netBanner" hidden>
+        <span id="netBannerText">Нет интернета</span>
+        <button type="button" id="netRetryBtn" class="btn btn--accent btn--xs">Повторить</button>
+      </div>
+
+      <footer class="composer">
+        <form id="chatForm" class="composer__form">
+          <textarea id="messageInput" class="composer__input" placeholder="Сообщение" rows="1" autofocus></textarea>
+          <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M5 12h14M13 6l6 6-6 6"/>
+            </svg>
+          </button>
+        </form>
+      </footer>
+    </div>
+
+    <div class="settings-backdrop" id="settingsBackdrop" hidden></div>
+    <aside class="nav settings" id="settingsPanel" aria-hidden="true">
+      <div class="nav__brand">
+        <div class="nav__brand-text">
+          <strong>Настройки</strong>
+          <span>Профиль и память</span>
+        </div>
+        <button type="button" id="settingsCloseBtn" class="nav__collapse" title="Закрыть" aria-label="Закрыть настройки">✕</button>
       </div>
 
       <div class="nav__scroll">
       <section class="nav__block">
-        <h3>Мозги</h3>
+        <h3>Модель</h3>
         <select id="providerSelect" class="nav__select" aria-label="Провайдер модели">
           <option value="local">Local-Qwen</option>
           <option value="deepseek">DeepSeek</option>
@@ -38,7 +80,7 @@
           <span>Пресет</span>
           <select id="profileSelect" class="nav__select" aria-label="Профиль пользователя"></select>
         </label>
-        <label class="nav__check"><input type="checkbox" id="injectProfile" checked> в каждый запрос</label>
+        <label class="nav__check"><input type="checkbox" id="injectProfile" checked> подмешивать в запрос</label>
         <label class="profile-field">
           <span>Имя</span>
           <input type="text" id="profileName" autocomplete="name" placeholder="как к вам обращаться">
@@ -87,7 +129,7 @@
       </section>
 
       <section class="nav__block">
-        <h3>В промпт</h3>
+        <h3>Память в запросе</h3>
         <div class="nav__checks">
           <label class="nav__check"><input type="checkbox" id="injectSTM" checked> STM</label>
           <label class="nav__check"><input type="checkbox" id="injectWM" checked> WM</label>
@@ -99,18 +141,19 @@
         </label>
         <button type="button" id="saveStrategyBtn" class="btn btn--accent btn--sm nav__btn">Сохранить</button>
         <p class="nav__meta" id="strategyLabel">LTM+WM+STM/8</p>
-        <p class="nav__hint" id="appSubtitle">#стиль · #формат · #ограничение</p>
+        <p class="nav__hint" id="appSubtitle"></p>
       </section>
 
       <section class="nav__block nav__actions">
         <button type="button" id="clearBtn" class="btn btn--ghost btn--sm nav__btn">Новый диалог</button>
         <button type="button" id="compareBtn" class="btn btn--ghost btn--sm nav__btn">Демо слоёв</button>
         <button type="button" id="profileDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо профилей</button>
+        <button type="button" id="taskDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо паузы</button>
         <a class="btn btn--ghost btn--sm nav__btn" href="/chatAi">ChatAI</a>
         <label class="debug-toggle nav__debug" title="Панель отладки">
           <input type="checkbox" id="debugToggle">
           <span class="debug-toggle__track"></span>
-          <span>Отладка</span>
+          <span>Сырой лог</span>
         </label>
       </section>
 
@@ -151,45 +194,10 @@
       </div>
     </aside>
 
-    <div class="app comic-panel">
-      <header class="chat-bar">
-        <button type="button" id="settingsBtn" class="chat-bar__menu" title="Меню" aria-label="Открыть меню">☰</button>
-        <span class="chat-bar__title">Чат</span>
-        <div class="token-meter chat-bar__meter" id="tokenMeter" aria-live="polite">
-          <div class="token-meter__bar"><span id="tokenBarFill" class="token-meter__fill"></span></div>
-          <p class="token-meter__text" id="tokenMeterText">токены: —</p>
-        </div>
-      </header>
-
-      <main class="chat" id="chat">
-        <div class="welcome" id="welcome">
-          <img class="welcome__donut" src="/static/img/agent-logo.png" alt="" width="56" height="56">
-          <h2>Персональный агент</h2>
-          <p>Профиль (стиль, формат, ограничения) уходит в каждый запрос. Слои памяти — рядом.</p>
-        </div>
-      </main>
-
-      <div class="net-banner" id="netBanner" hidden>
-        <span id="netBannerText">Нет интернета</span>
-        <button type="button" id="netRetryBtn" class="btn btn--accent btn--xs">Повторить</button>
-      </div>
-
-      <footer class="composer">
-        <form id="chatForm" class="composer__form">
-          <textarea id="messageInput" class="composer__input" placeholder="Сообщение или #стиль / #формат…" rows="1" autofocus></textarea>
-          <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-            </svg>
-          </button>
-        </form>
-      </footer>
-    </div>
-
     <aside class="debug-panel" id="debugPanel" aria-hidden="true">
       <div class="debug-panel__header">
-        <h2 class="debug-panel__title">Отладка</h2>
-        <button type="button" id="clearDebugBtn" class="btn btn--ghost btn--sm">Очистить лог</button>
+        <h2 class="debug-panel__title">Сырой лог</h2>
+        <button type="button" id="clearDebugBtn" class="btn btn--ghost btn--sm">Очистить</button>
       </div>
       <div class="debug-panel__body" id="debugLog">
         <p class="debug-panel__empty">Запросы появятся здесь.</p>
@@ -197,6 +205,6 @@
     </aside>
   </div>
 
-  <script src="/static/chat.js?v=day12-fields"></script>
+  <script src="/static/chat.js?v=day13-phases"></script>
 </body>
 </html>

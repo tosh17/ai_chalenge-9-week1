@@ -59,6 +59,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/profile", h.ProfileSave)
 	mux.HandleFunc("POST /api/profile/activate", h.ProfileActivate)
 	mux.HandleFunc("POST /api/profile/demo", h.ProfileDemo)
+	mux.HandleFunc("POST /api/task/event", h.TaskEvent)
+	mux.HandleFunc("POST /api/task/seed", h.TaskSeed)
+	mux.HandleFunc("POST /api/task/demo", h.TaskDemo)
 	mux.HandleFunc("DELETE /api/memory/{layer}", h.MemoryClear)
 	mux.HandleFunc("DELETE /api/memory", h.MemoryClear)
 }

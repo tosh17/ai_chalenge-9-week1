@@ -203,3 +203,71 @@ func TestExplicitStylePrefixUpdatesProfile(t *testing.T) {
 		t.Fatalf("%s %+v", src, d.Profile)
 	}
 }
+
+func TestTaskPrefixesPauseResumeAdvance(t *testing.T) {
+	d, src := parseExplicitRoute("#пауза")
+	if src != "prefix" || d.Working == nil || d.Working.Event != memory.TaskPause {
+		t.Fatalf("pause: %s %+v", src, d.Working)
+	}
+	d, src = parseExplicitRoute("#продолжи")
+	if src != "prefix" || d.Working == nil || d.Working.Event != memory.TaskResume {
+		t.Fatalf("resume: %s %+v", src, d.Working)
+	}
+	d, src = parseExplicitRoute("#этап validation")
+	if src != "prefix" || d.Working == nil || memory.NormalizeStage(d.Working.Stage) != memory.StageValidation {
+		t.Fatalf("stage: %s %+v", src, d.Working)
+	}
+	d, src = parseExplicitRoute("#шаг собрать стены")
+	if src != "prefix" || d.Working == nil || d.Working.Step != "собрать стены" {
+		t.Fatalf("step: %s %+v", src, d.Working)
+	}
+	d, src = parseExplicitRoute("#ожидаю подтверждение материала")
+	if src != "prefix" || d.Working == nil || d.Working.Expect == "" {
+		t.Fatalf("expect: %s %+v", src, d.Working)
+	}
+}
+
+func TestPromptInjectsTaskMachine(t *testing.T) {
+	dir := t.TempDir()
+	layers, err := memory.OpenLayers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = layers.ApplyWorking(memory.WorkingPatch{
+		Goal: "дом", Event: memory.TaskSet, Stage: memory.StageExecution,
+		Step: "стены", Expect: "материал", AddDone: []string{"фундамент готов"},
+	})
+	_ = layers.ApplyTask(memory.TaskPause, memory.WorkingPatch{})
+
+	a := New("test").WithLayers(layers).WithMemoryPolicy(MemoryPolicy{STMWindowN: 4, InjectSTM: false, InjectWM: true, InjectLTM: false})
+	msgs, info := a.buildMessagesLayers("напомни план", a.MemoryPolicy())
+	blob := ""
+	for _, m := range msgs {
+		blob += m.Content + "\n"
+	}
+	if !strings.Contains(blob, "СОСТОЯНИЕ ЗАДАЧИ") || !strings.Contains(blob, "ВЫПОЛНЕНИЕ") {
+		t.Fatalf("fsm missing:\n%s", blob)
+	}
+	if !strings.Contains(blob, "ПАУЗА") || !strings.Contains(blob, "стены") {
+		t.Fatalf("pause/step missing:\n%s", blob)
+	}
+	if !strings.Contains(blob, "фундамент готов") {
+		t.Fatalf("done_so_far missing:\n%s", blob)
+	}
+	if !info.WorkingActive {
+		t.Fatal("paused execution still active")
+	}
+
+	_ = layers.ApplyTask(memory.TaskResume, memory.WorkingPatch{})
+	msgs, _ = a.buildMessagesLayers("продолжай", a.MemoryPolicy())
+	blob = ""
+	for _, m := range msgs {
+		blob += m.Content + "\n"
+	}
+	if strings.Contains(blob, "ПАУЗА на этом этапе") {
+		t.Fatalf("resume still paused:\n%s", blob)
+	}
+	if !strings.Contains(blob, "стены") {
+		t.Fatalf("resume lost step:\n%s", blob)
+	}
+}

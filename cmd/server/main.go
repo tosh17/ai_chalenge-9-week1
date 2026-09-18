@@ -27,12 +27,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("profiles: %v", err)
 	}
-	log.Printf("memory layers: %s (stm=%d wm=%s ltm=%q profile=%s/%s)",
-		layers.Dir(), layers.ShortTermLen(), layers.Working().Status, layers.LongTerm().Profile.Name,
+	log.Printf("memory layers: %s (stm=%d wm=%s/%s ltm=%q profile=%s/%s)",
+		layers.Dir(), layers.ShortTermLen(), layers.Working().Status, layers.Working().Task.Stage, layers.LongTerm().Profile.Name,
 		profiles.ActiveID(), profiles.Active().Title)
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day12-persona-agent").
+	chatAgent := agent.New("day13-task-agent").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithMemoryPolicy(agent.MemoryPolicy{
