@@ -1723,8 +1723,44 @@ a.btn.nav__btn {
   color: var(--text-muted);
 }
 
-.trace-raw {
-  margin-top: 10px;
+.trace__sec--conflict {
+  color: var(--error);
+}
+
+.invariant-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.invariant-item {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-size: 0.78rem;
+}
+
+.invariant-item--off {
+  opacity: 0.55;
+}
+
+.invariant-item__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.invariant-item p {
+  margin: 6px 0;
+  color: var(--text-muted);
+}
+
+.message--refused .message__bubble {
+  background: #fff6f5;
 }
 
 .trace-raw summary {

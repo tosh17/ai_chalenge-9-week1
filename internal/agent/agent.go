@@ -40,10 +40,11 @@ type Request struct {
 	// Compress: nil = настройка агента; &true/&false = явный режим на этот ход.
 	Compress *bool
 	// Inject*: nil = политика агента; явные флаги — какие слои памяти подмешать в этот ход.
-	InjectSTM     *bool
-	InjectWM      *bool
-	InjectLTM     *bool
-	InjectProfile *bool
+	InjectSTM        *bool
+	InjectWM         *bool
+	InjectLTM        *bool
+	InjectProfile    *bool
+	InjectInvariants *bool
 }
 
 // Result — выход агента: ответ и служебные метаданные.
@@ -52,14 +53,15 @@ type Result struct {
 	Provider        string
 	Model           string
 	DurationMs      int64
-	Tokens          *tokens.Usage         `json:"tokens,omitempty"`
-	Session         *tokens.SessionTotals `json:"session,omitempty"`
-	Compression     *CompressionInfo      `json:"compression,omitempty"`
-	SummarizeEvents []SummarizeEvent      `json:"summarize_events,omitempty"`
-	Strategy        *StrategyInfo         `json:"strategy,omitempty"`
-	FactEvents      []FactUpdateEvent     `json:"fact_events,omitempty"`
-	Memory          *MemoryInfo           `json:"memory,omitempty"`
-	RouteEvents     []MemoryRouteEvent    `json:"route_events,omitempty"`
+	Tokens          *tokens.Usage              `json:"tokens,omitempty"`
+	Session         *tokens.SessionTotals      `json:"session,omitempty"`
+	Compression     *CompressionInfo           `json:"compression,omitempty"`
+	SummarizeEvents []SummarizeEvent           `json:"summarize_events,omitempty"`
+	Strategy        *StrategyInfo              `json:"strategy,omitempty"`
+	FactEvents      []FactUpdateEvent          `json:"fact_events,omitempty"`
+	Memory          *MemoryInfo                `json:"memory,omitempty"`
+	RouteEvents     []MemoryRouteEvent         `json:"route_events,omitempty"`
+	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
 	Debug           *deepseek.DebugInfo
 }
 
@@ -92,6 +94,7 @@ type Agent struct {
 	memory       *memory.Store
 	layers       *memory.Layers
 	profiles     *memory.ProfileBook
+	invariants   *memory.InvariantBook
 	memoryPolicy MemoryPolicy
 	compression  CompressionConfig
 	strategy     ContextStrategy

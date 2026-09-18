@@ -27,20 +27,26 @@ func main() {
 	if err != nil {
 		log.Fatalf("profiles: %v", err)
 	}
-	log.Printf("memory layers: %s (stm=%d wm=%s/%s ltm=%q profile=%s/%s)",
+	invariants, err := memory.OpenInvariantBook(cfg.MemoryDir)
+	if err != nil {
+		log.Fatalf("invariants: %v", err)
+	}
+	log.Printf("memory layers: %s (stm=%d wm=%s/%s ltm=%q profile=%s/%s invariants=%d)",
 		layers.Dir(), layers.ShortTermLen(), layers.Working().Status, layers.Working().Task.Stage, layers.LongTerm().Profile.Name,
-		profiles.ActiveID(), profiles.Active().Title)
+		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day13-task-agent").
+	chatAgent := agent.New("day14-invariant-agent").
 		WithLayers(layers).
 		WithProfiles(profiles).
+		WithInvariants(invariants).
 		WithMemoryPolicy(agent.MemoryPolicy{
-			STMWindowN:    cfg.STMWindowN,
-			InjectSTM:     cfg.InjectSTM,
-			InjectWM:      cfg.InjectWM,
-			InjectLTM:     cfg.InjectLTM,
-			InjectProfile: cfg.InjectProfile,
+			STMWindowN:       cfg.STMWindowN,
+			InjectSTM:        cfg.InjectSTM,
+			InjectWM:         cfg.InjectWM,
+			InjectLTM:        cfg.InjectLTM,
+			InjectProfile:    cfg.InjectProfile,
+			InjectInvariants: cfg.InjectInvariants,
 		}).
 		WithContextLimit(cfg.ContextTokenLimit).
 		WithStrategy(agent.ContextStrategy{
@@ -70,9 +76,9 @@ func main() {
 	st := chatAgent.Strategy()
 	mp := chatAgent.MemoryPolicy()
 	log.Printf(
-		"server listening on %s (agent: %s, default: %s, layers stm_window=%d inject stm=%v wm=%v ltm=%v profile=%v, strategy: %s)",
+		"server listening on %s (agent: %s, default: %s, layers stm_window=%d inject stm=%v wm=%v ltm=%v profile=%v inv=%v, strategy: %s)",
 		addr, chatAgent.Name(), chatAgent.DefaultProvider(),
-		mp.STMWindowN, mp.InjectSTM, mp.InjectWM, mp.InjectLTM, mp.InjectProfile, st.Kind,
+		mp.STMWindowN, mp.InjectSTM, mp.InjectWM, mp.InjectLTM, mp.InjectProfile, mp.InjectInvariants, st.Kind,
 	)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)

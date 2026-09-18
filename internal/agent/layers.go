@@ -13,11 +13,12 @@ import (
 	"github.com/tosh17/deepseek-service/internal/tokens"
 )
 
-const memorySystemPrompt = `Ты агент с явной трёхслойной памятью и конечным автоматом задачи.
+const memorySystemPrompt = `Ты агент с явной трёхслойной памятью, конечным автоматом задачи и жёсткими инвариантами.
 Используй слои так:
 - ДОЛГОВРЕМЕННАЯ: профиль, решения, знания — считай их истиной между сессиями.
 - РАБОЧАЯ: данные текущей задачи — цель, ограничения, черновики. Если слоя нет, задачи нет.
 - СОСТОЯНИЕ ЗАДАЧИ: фаза строго по порядку планирование → выполнение → проверка → готово.
+- ИНВАРИАНТЫ: архитектура, принятые решения, стек, бизнес-правила. Их нельзя нарушать. Если запрос им противоречит — откажи и объясни, не предлагай обход.
 - КРАТКОСРОЧНАЯ: только недавний диалог; старые реплики могли быть вытеснены окном.
 Работай только в текущей фазе. Не перескакивай. Этап ставит система по собранным данным, пользователь его не выбирает.
 Если в слое нет факта — не выдумывай его из «общей эрудиции диалога». Отвечай на языке пользователя.`
@@ -26,20 +27,22 @@ const memoryRouterSystem = `Ты маршрутизатор памяти. Отв
 
 // MemoryPolicy — что агент кладёт в промпт и размер STM-окна.
 type MemoryPolicy struct {
-	STMWindowN    int  `json:"stm_window_n"`
-	InjectSTM     bool `json:"inject_stm"`
-	InjectWM      bool `json:"inject_wm"`
-	InjectLTM     bool `json:"inject_ltm"`
-	InjectProfile bool `json:"inject_profile"`
+	STMWindowN       int  `json:"stm_window_n"`
+	InjectSTM        bool `json:"inject_stm"`
+	InjectWM         bool `json:"inject_wm"`
+	InjectLTM        bool `json:"inject_ltm"`
+	InjectProfile    bool `json:"inject_profile"`
+	InjectInvariants bool `json:"inject_invariants"`
 }
 
 func defaultMemoryPolicy() MemoryPolicy {
 	return MemoryPolicy{
-		STMWindowN:    8,
-		InjectSTM:     true,
-		InjectWM:      true,
-		InjectLTM:     true,
-		InjectProfile: true,
+		STMWindowN:       8,
+		InjectSTM:        true,
+		InjectWM:         true,
+		InjectLTM:        true,
+		InjectProfile:    true,
+		InjectInvariants: true,
 	}
 }
 
@@ -52,17 +55,21 @@ func normalizeMemoryPolicy(p MemoryPolicy) MemoryPolicy {
 
 // MemoryInfo — что ушло в промпт и состояние слоёв после хода.
 type MemoryInfo struct {
-	Policy            MemoryPolicy         `json:"policy"`
-	ShortTermCount    int                  `json:"short_term_count"`
-	ShortTermInPrompt int                  `json:"short_term_in_prompt"`
-	Discarded         int                  `json:"discarded,omitempty"`
-	WorkingActive     bool                 `json:"working_active"`
-	Working           memory.WorkingState  `json:"working"`
-	LongTerm          memory.LongTermState `json:"long_term"`
-	Profile           memory.UserProfile   `json:"profile,omitempty"`
-	ProfileInPrompt   bool                 `json:"profile_in_prompt,omitempty"`
-	STMPreview        []deepseek.Message   `json:"stm_preview,omitempty"`
-	Paths             map[string]string    `json:"paths,omitempty"`
+	Policy             MemoryPolicy               `json:"policy"`
+	ShortTermCount     int                        `json:"short_term_count"`
+	ShortTermInPrompt  int                        `json:"short_term_in_prompt"`
+	Discarded          int                        `json:"discarded,omitempty"`
+	WorkingActive      bool                       `json:"working_active"`
+	Working            memory.WorkingState        `json:"working"`
+	LongTerm           memory.LongTermState       `json:"long_term"`
+	Profile            memory.UserProfile         `json:"profile,omitempty"`
+	ProfileInPrompt    bool                       `json:"profile_in_prompt,omitempty"`
+	Invariants         []memory.Invariant         `json:"invariants,omitempty"`
+	InvariantsInPrompt bool                       `json:"invariants_in_prompt,omitempty"`
+	InvariantPath      string                     `json:"invariant_path,omitempty"`
+	Conflicts          []memory.InvariantConflict `json:"conflicts,omitempty"`
+	STMPreview         []deepseek.Message         `json:"stm_preview,omitempty"`
+	Paths              map[string]string          `json:"paths,omitempty"`
 }
 
 // MemoryRouteEvent — явный выбор, что и в какой слой записали.
@@ -74,6 +81,7 @@ type MemoryRouteEvent struct {
 	WroteWM          bool                     `json:"wrote_wm"`
 	WroteLTM         bool                     `json:"wrote_ltm"`
 	WroteProfile     bool                     `json:"wrote_profile,omitempty"`
+	WroteInvariant   bool                     `json:"wrote_invariant,omitempty"`
 	Working          *memory.WorkingPatch     `json:"working,omitempty"`
 	LongTerm         *memory.LongTermPatch    `json:"long_term,omitempty"`
 	Profile          *memory.UserProfilePatch `json:"profile,omitempty"`
@@ -89,10 +97,11 @@ type MemoryRouteEvent struct {
 }
 
 type routeDecision struct {
-	Working  *memory.WorkingPatch     `json:"working,omitempty"`
-	LongTerm *memory.LongTermPatch    `json:"long_term,omitempty"`
-	Profile  *memory.UserProfilePatch `json:"profile,omitempty"`
-	Reasons  []string                 `json:"reasons"`
+	Working   *memory.WorkingPatch     `json:"working,omitempty"`
+	LongTerm  *memory.LongTermPatch    `json:"long_term,omitempty"`
+	Profile   *memory.UserProfilePatch `json:"profile,omitempty"`
+	Invariant *memory.Invariant        `json:"invariant,omitempty"`
+	Reasons   []string                 `json:"reasons"`
 }
 
 // WithLayers подключает трёхслойную память. При наличии layers Handle идёт по модели слоёв.
@@ -131,6 +140,7 @@ func (a *Agent) CloneWithLayers(name string, layers *memory.Layers) *Agent {
 	clone.memoryPolicy = a.memoryPolicy
 	clone.layers = layers
 	clone.profiles = a.profiles
+	clone.invariants = a.invariants
 	clone.systemPrompt = a.systemPrompt
 	return clone
 }
@@ -146,6 +156,17 @@ func (a *Agent) Profiles() *memory.ProfileBook {
 	return a.profiles
 }
 
+// WithInvariants подключает рамки, которые нельзя нарушать.
+func (a *Agent) WithInvariants(book *memory.InvariantBook) *Agent {
+	a.invariants = book
+	return a
+}
+
+// Invariants возвращает книгу инвариантов (может быть nil).
+func (a *Agent) Invariants() *memory.InvariantBook {
+	return a.invariants
+}
+
 func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID string, b backend) (Result, error) {
 	policy := a.effectivePolicy(req)
 
@@ -156,6 +177,11 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 	}
 
 	messages, memInfo := a.buildMessagesLayers(req.Message, policy)
+	conflicts := memInfo.Conflicts
+	inPrompt := memInfo.InvariantsInPrompt
+	for _, c := range conflicts {
+		route.Reasons = append(route.Reasons, "инвариант: отказ — «"+c.Title+"» ("+memory.KindTitle(c.Kind)+")")
+	}
 	limit := a.ContextLimit(providerID)
 	usage := a.buildTokenUsage(messages, req.Message, b.model, nil, limit)
 	session := a.SessionTotals()
@@ -168,6 +194,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 			Session:     &session,
 			Memory:      &memInfo,
 			RouteEvents: []MemoryRouteEvent{route},
+			Conflicts:   conflicts,
 		}, &ErrContextOverflow{Usage: usage}
 	}
 
@@ -184,6 +211,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 			Session:     &session,
 			Memory:      &memInfo,
 			RouteEvents: []MemoryRouteEvent{route},
+			Conflicts:   conflicts,
 			Debug:       &debug,
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
@@ -213,6 +241,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 				Session:     &sess,
 				Memory:      &memInfo,
 				RouteEvents: []MemoryRouteEvent{route},
+				Conflicts:   conflicts,
 			}, fmt.Errorf("agent %q: save stm: %w", a.name, saveErr)
 		}
 		discarded = n
@@ -222,6 +251,8 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 	memInfo = a.memorySnapshot(policy)
 	memInfo.Discarded = discarded
 	memInfo.ShortTermInPrompt = countSTMInPrompt(messages)
+	memInfo.Conflicts = conflicts
+	memInfo.InvariantsInPrompt = inPrompt
 	debug := chat.Debug
 	return Result{
 		Reply:       chat.Reply,
@@ -232,6 +263,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 		Session:     &sess,
 		Memory:      &memInfo,
 		RouteEvents: []MemoryRouteEvent{route},
+		Conflicts:   conflicts,
 		Debug:       &debug,
 	}, nil
 }
@@ -253,6 +285,9 @@ func (a *Agent) effectivePolicy(req Request) MemoryPolicy {
 	if req.InjectProfile != nil {
 		p.InjectProfile = *req.InjectProfile
 	}
+	if req.InjectInvariants != nil {
+		p.InjectInvariants = *req.InjectInvariants
+	}
 	return p
 }
 
@@ -271,6 +306,10 @@ func (a *Agent) memorySnapshot(policy MemoryPolicy) MemoryInfo {
 	info.Paths = snap.Paths
 	if a.profiles != nil {
 		info.Profile = a.profiles.Active()
+	}
+	if a.invariants != nil {
+		info.Invariants = a.invariants.Enabled()
+		info.InvariantPath = a.invariants.Path()
 	}
 	return info
 }
@@ -301,6 +340,18 @@ func (a *Agent) buildMessagesLayers(userMsg string, policy MemoryPolicy) ([]deep
 		info.Profile = prof
 		info.ProfileInPrompt = true
 		out = append(out, deepseek.Message{Role: "system", Content: memory.FormatProfileBlock(prof)})
+	}
+
+	if policy.InjectInvariants && a.invariants != nil {
+		enabled := a.invariants.Enabled()
+		info.Invariants = enabled
+		info.InvariantsInPrompt = true
+		info.InvariantPath = a.invariants.Path()
+		out = append(out, deepseek.Message{Role: "system", Content: memory.FormatInvariantBlock(enabled)})
+		if conflicts := memory.FindConflicts(enabled, userMsg); len(conflicts) > 0 {
+			info.Conflicts = conflicts
+			out = append(out, deepseek.Message{Role: "system", Content: memory.FormatConflictBlock(conflicts)})
+		}
 	}
 
 	if policy.InjectLTM && a.layers != nil {
@@ -581,6 +632,12 @@ func (a *Agent) applyRoute(d routeDecision, ev *MemoryRouteEvent) error {
 		ev.WroteProfile = true
 		ev.Profile = d.Profile
 	}
+	if d.Invariant != nil && a.invariants != nil {
+		if err := a.invariants.Upsert(*d.Invariant); err != nil {
+			return err
+		}
+		ev.WroteInvariant = true
+	}
 	return nil
 }
 
@@ -625,6 +682,7 @@ var (
 	rePrefixStage      = regexp.MustCompile(`(?i)^#этап\s+`)
 	rePrefixStep       = regexp.MustCompile(`(?i)^#шаг\s+`)
 	rePrefixExpect     = regexp.MustCompile(`(?i)^#ожидаю\s+`)
+	rePrefixInvariant  = regexp.MustCompile(`(?i)^#инвариант\s+`)
 	reName             = regexp.MustCompile(`(?i)(?:меня зовут|зови меня|моё имя|мое имя)\s+([A-Za-zА-Яа-яЁё-]{2,40})`)
 	reNameYa           = regexp.MustCompile(`(?i)(?:^|[\s,.;!?])я\s+([A-Za-zА-Яа-яЁё-]{2,40})(?:$|[\s,.;!?])`)
 	rePrefers          = regexp.MustCompile(`(?i)(?:предпочитаю|давай всегда|отвечай)\s+(.{3,80})`)
@@ -673,6 +731,23 @@ func parseExplicitRoute(msg string) (routeDecision, string) {
 		return routeDecision{
 			Working: &memory.WorkingPatch{Event: memory.TaskSet, Expect: body},
 			Reasons: []string{"задача: явный префикс #ожидаю"},
+		}, "prefix"
+	case rePrefixInvariant.MatchString(trim):
+		body := strings.TrimSpace(rePrefixInvariant.ReplaceAllString(trim, ""))
+		kind, rest := splitInvariantPrefix(body)
+		title := rest
+		if len([]rune(title)) > 48 {
+			title = string([]rune(title)[:48])
+		}
+		return routeDecision{
+			Invariant: &memory.Invariant{
+				Kind:    kind,
+				Title:   title,
+				Rule:    rest,
+				Enabled: true,
+				Forbid:  memory.ForbidFromRule(rest),
+			},
+			Reasons: []string{"инвариант: явный префикс #инвариант"},
 		}, "prefix"
 	case rePrefixWM.MatchString(trim):
 		body := strings.TrimSpace(rePrefixWM.ReplaceAllString(trim, ""))
@@ -729,6 +804,24 @@ func parseExplicitRoute(msg string) (routeDecision, string) {
 		}, "prefix"
 	}
 	return routeDecision{}, ""
+}
+
+func splitInvariantPrefix(body string) (kind, rest string) {
+	body = strings.TrimSpace(body)
+	kind, rest, ok := strings.Cut(body, ":")
+	if ok {
+		return memory.NormalizeInvariantKind(kind), strings.TrimSpace(rest)
+	}
+	fields := strings.Fields(body)
+	if len(fields) >= 2 {
+		k := memory.NormalizeInvariantKind(fields[0])
+		if k == memory.InvariantArchitecture || k == memory.InvariantStack || k == memory.InvariantBusiness ||
+			strings.EqualFold(fields[0], "стек") || strings.EqualFold(fields[0], "архитектура") ||
+			strings.EqualFold(fields[0], "решение") || strings.EqualFold(fields[0], "бизнес") {
+			return k, strings.TrimSpace(strings.TrimPrefix(body, fields[0]))
+		}
+	}
+	return memory.InvariantDecision, body
 }
 
 func splitKV(s string) (key, val string) {

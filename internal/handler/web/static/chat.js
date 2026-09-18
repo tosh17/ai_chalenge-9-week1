@@ -24,6 +24,7 @@ const injectSTM = document.getElementById("injectSTM");
 const injectWM = document.getElementById("injectWM");
 const injectLTM = document.getElementById("injectLTM");
 const injectProfile = document.getElementById("injectProfile");
+const injectInvariants = document.getElementById("injectInvariants");
 const profileSelect = document.getElementById("profileSelect");
 const profileName = document.getElementById("profileName");
 const profileRole = document.getElementById("profileRole");
@@ -48,6 +49,13 @@ const taskAdvanceBtn = document.getElementById("taskAdvanceBtn");
 const taskSaveBtn = document.getElementById("taskSaveBtn");
 const taskSeedBtn = document.getElementById("taskSeedBtn");
 const taskDemoBtn = document.getElementById("taskDemoBtn");
+const invariantDemoBtn = document.getElementById("invariantDemoBtn");
+const invariantList = document.getElementById("invariantList");
+const invariantKind = document.getElementById("invariantKind");
+const invariantTitle = document.getElementById("invariantTitle");
+const invariantRule = document.getElementById("invariantRule");
+const invariantForbid = document.getElementById("invariantForbid");
+const saveInvariantBtn = document.getElementById("saveInvariantBtn");
 const stmWindow = document.getElementById("stmWindow");
 const stmMeta = document.getElementById("stmMeta");
 const stmPre = document.getElementById("stmPre");
@@ -76,7 +84,7 @@ let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {{id: string, title: string, model: string, context_limit?: number}[]} */
 let providers = [];
-let currentPolicy = { stm_window_n: 8, inject_stm: true, inject_wm: true, inject_ltm: true, inject_profile: true };
+let currentPolicy = { stm_window_n: 8, inject_stm: true, inject_wm: true, inject_ltm: true, inject_profile: true, inject_invariants: true };
 /** @type {{id: string, title?: string, name?: string, role?: string, language?: string, style?: string, format?: string, constraints?: string[]}[]} */
 let profileList = [];
 let activeProfileID = "";
@@ -130,6 +138,15 @@ function createMessage(role, content, extraClass = "", meta = {}) {
   chatEl.appendChild(el);
   scrollToBottom();
   return el;
+}
+
+function kindTitle(kind) {
+  switch (String(kind || "").toLowerCase()) {
+    case "architecture": return "архитектура";
+    case "stack": return "стек";
+    case "business": return "бизнес-правило";
+    default: return "решение";
+  }
 }
 
 function humanStage(stage) {
@@ -198,7 +215,9 @@ function humanizeReason(raw) {
   if (/^STM:/i.test(s) || /реплика текущего диалога/i.test(s)) {
     return "Оставил реплику в текущем диалоге";
   }
-  s = s.replace(/^профиль:\s*/i, "Профиль: ");
+  if (/^инвариант:/i.test(s)) {
+    return s.replace(/^инвариант:\s*/i, "Инвариант: ");
+  }
   s = s.replace(/^long_term:\s*/i, "");
   s = s.replace(/^LTM:\s*/i, "");
   s = s.replace(/^working(?:\.[a-zA-Z_]+)?(?:=[^:]*)?:\s*/i, "");
@@ -217,6 +236,7 @@ function memoryWrites(routes) {
     if (ev.wrote_wm) tags.add("текущую задачу");
     if (ev.wrote_ltm) tags.add("долгую память");
     if (ev.wrote_profile) tags.add("профиль");
+    if (ev.wrote_invariant) tags.add("инварианты");
   }
   return [...tags];
 }
@@ -225,13 +245,25 @@ function buildTraceHTML(meta) {
   const routes = Array.isArray(meta.routeEvents) ? meta.routeEvents : [];
   const debug = meta.debug;
   const task = meta.task || {};
+  const conflicts = Array.isArray(meta.conflicts) ? meta.conflicts : [];
+  const invariants = Array.isArray(meta.invariants) ? meta.invariants : [];
   const reasons = routes.flatMap((r) => r.reasons || []);
   const hasRouter = routes.some((r) => r.prompt || r.raw_reply || r.system);
-  if (!reasons.length && !debug && !task.stage && !hasRouter) return "";
-  const title = phaseTitle(task);
+  if (!reasons.length && !debug && !task.stage && !hasRouter && !conflicts.length && !invariants.length) return "";
+  const title = conflicts.length ? `Отказ · ${phaseTitle(task)}` : phaseTitle(task);
   const humanReasons = [...new Set(reasons.map(humanizeReason).filter(Boolean))];
   const writes = memoryWrites(routes);
   let body = `<p class="trace__lead">${escapeHTML(phaseLead(task))}</p>`;
+  if (invariants.length) {
+    body += `<section class="trace__sec"><h4>Инварианты</h4><ul>${invariants
+      .map((inv) => `<li><strong>${escapeHTML(kindTitle(inv.kind))}</strong> — ${escapeHTML(inv.title)}: ${escapeHTML(inv.rule)}</li>`)
+      .join("")}</ul></section>`;
+  }
+  if (conflicts.length) {
+    body += `<section class="trace__sec trace__sec--conflict"><h4>Конфликт</h4><ul>${conflicts
+      .map((c) => `<li>${escapeHTML(c.reason || c.title)}</li>`)
+      .join("")}</ul><p>Отказываюсь предлагать решение, которое ломает рамку. Объясняю почему и что можно внутри неё.</p></section>`;
+  }
   if (task.expect) {
     body += `<p class="trace__expect">Жду: ${escapeHTML(task.expect)}</p>`;
   }
@@ -288,6 +320,8 @@ function setLoading(loading) {
   if (saveProfileBtn) saveProfileBtn.disabled = loading;
   if (profileDemoBtn) profileDemoBtn.disabled = loading;
   if (taskDemoBtn) taskDemoBtn.disabled = loading;
+  if (invariantDemoBtn) invariantDemoBtn.disabled = loading;
+  if (saveInvariantBtn) saveInvariantBtn.disabled = loading;
   [clearStmBtn, clearWmBtn, clearLtmBtn].forEach((b) => {
     if (b) b.disabled = loading;
   });
@@ -463,6 +497,7 @@ function updateTokenMeter(tokens, session) {
 function policyLabel(p) {
   const on = [];
   if (p.inject_profile !== false) on.push("PROF");
+  if (p.inject_invariants !== false) on.push("INV");
   if (p.inject_ltm) on.push("LTM");
   if (p.inject_wm) on.push("WM");
   if (p.inject_stm) on.push(`STM/${p.stm_window_n || 8}`);
@@ -475,9 +510,10 @@ function applyPolicyToForm(p) {
   injectWM.checked = currentPolicy.inject_wm !== false;
   injectLTM.checked = currentPolicy.inject_ltm !== false;
   if (injectProfile) injectProfile.checked = currentPolicy.inject_profile !== false;
+  if (injectInvariants) injectInvariants.checked = currentPolicy.inject_invariants !== false;
   stmWindow.value = currentPolicy.stm_window_n || 8;
   strategyLabel.textContent = policyLabel(currentPolicy);
-  if (appSubtitle) appSubtitle.textContent = "#стиль · #формат · #ограничение";
+  if (appSubtitle) appSubtitle.textContent = "#инвариант стек: только Go";
 }
 
 function formatSTM(messages) {
@@ -682,6 +718,92 @@ function renderProfileBook(data) {
   fillProfileForm(active, activeProfileID);
 }
 
+function renderInvariants(data) {
+  if (!invariantList || !data) return;
+  const items = Array.isArray(data.items) ? data.items : [];
+  invariantList.innerHTML = "";
+  if (!items.length) {
+    invariantList.innerHTML = '<li class="nav__meta">пока нет рамок</li>';
+    return;
+  }
+  for (const it of items) {
+    const li = document.createElement("li");
+    li.className = "invariant-item" + (it.enabled ? "" : " invariant-item--off");
+    li.innerHTML = `
+      <label class="invariant-item__head">
+        <input type="checkbox" data-id="${escapeHTML(it.id)}" ${it.enabled ? "checked" : ""}>
+        <span><strong>${escapeHTML(kindTitle(it.kind))}</strong> · ${escapeHTML(it.title || it.id)}</span>
+      </label>
+      <p>${escapeHTML(it.rule || "")}</p>
+      <button type="button" class="btn btn--ghost btn--xs" data-del="${escapeHTML(it.id)}">удалить</button>`;
+    const box = li.querySelector("input[type=checkbox]");
+    box.addEventListener("change", () => toggleInvariant(it.id, box.checked));
+    li.querySelector("[data-del]").addEventListener("click", () => deleteInvariant(it.id));
+    invariantList.appendChild(li);
+  }
+}
+
+async function saveInvariant() {
+  const rule = invariantRule ? invariantRule.value.trim() : "";
+  const title = invariantTitle ? invariantTitle.value.trim() : "";
+  if (!rule) return;
+  const forbid = (invariantForbid ? invariantForbid.value : "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  setLoading(true);
+  try {
+    const res = await fetch("/api/invariants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: invariantKind ? invariantKind.value : "decision",
+        title: title || rule.slice(0, 40),
+        rule,
+        forbid,
+        enabled: true,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Не удалось сохранить инвариант", "message--error");
+      return;
+    }
+    renderInvariants(data);
+    if (invariantTitle) invariantTitle.value = "";
+    if (invariantRule) invariantRule.value = "";
+    if (invariantForbid) invariantForbid.value = "";
+  } catch {
+    createMessage("assistant", "Не удалось сохранить инвариант", "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function toggleInvariant(id, enabled) {
+  try {
+    const res = await fetch("/api/invariants/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, enabled }),
+    });
+    const data = await res.json();
+    if (res.ok) renderInvariants(data);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function deleteInvariant(id) {
+  try {
+    const res = await fetch(`/api/invariants/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (res.ok) renderInvariants(data);
+  } catch {
+    /* ignore */
+  }
+}
+
 function profileFromForm() {
   return {
     id: (profileSelect && profileSelect.value) || activeProfileID || "custom",
@@ -833,6 +955,35 @@ async function runTaskDemo() {
   }
 }
 
+async function runInvariantDemo() {
+  setLoading(true);
+  createMessage("user", "Демо: конфликт запроса с инвариантом и запрос внутри рамки");
+  createTypingIndicator();
+  const requestBody = { provider: currentProvider() };
+  const started = performance.now();
+  try {
+    const res = await fetch("/api/invariants/demo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    const data = await res.json();
+    const durationMs = Math.round(performance.now() - started);
+    removeTypingIndicator();
+    logExchange({ url: "/api/invariants/demo", requestBody, status: res.status, responseBody: data, durationMs });
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Демо инвариантов упало", "message--error", { durationMs });
+      return;
+    }
+    createMessage("assistant", data.report || JSON.stringify(data, null, 2), "message--mono", { durationMs });
+  } catch {
+    removeTypingIndicator();
+    createMessage("assistant", "Не удалось запустить демо инвариантов.", "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
+
 function renderRouteEvents(events) {
   if (!routeList) return;
   if (!Array.isArray(events) || !events.length) return;
@@ -843,6 +994,7 @@ function renderRouteEvents(events) {
     if (ev.wrote_wm) wrote.push("WM");
     if (ev.wrote_ltm) wrote.push("LTM");
     if (ev.wrote_profile) wrote.push("PROF");
+    if (ev.wrote_invariant) wrote.push("INV");
     const chip = document.createElement("span");
     chip.className = "route-chip";
     chip.textContent = `${ev.source || "route"} → ${wrote.join("+") || "STM"}`;
@@ -866,6 +1018,7 @@ async function loadMemory() {
     if (data.policy) applyPolicyToForm(data.policy);
     renderMemory(data.memory);
     if (data.profiles) renderProfileBook(data.profiles);
+    if (data.invariants) renderInvariants(data.invariants);
   } catch {
     /* ignore */
   }
@@ -878,6 +1031,7 @@ async function savePolicy() {
     inject_wm: injectWM.checked,
     inject_ltm: injectLTM.checked,
     inject_profile: injectProfile ? injectProfile.checked : true,
+    inject_invariants: injectInvariants ? injectInvariants.checked : true,
   };
   setLoading(true);
   try {
@@ -1105,6 +1259,7 @@ async function sendMessage(text, opts = {}) {
     inject_wm: injectWM ? injectWM.checked : true,
     inject_ltm: injectLTM ? injectLTM.checked : true,
     inject_profile: injectProfile ? injectProfile.checked : true,
+    inject_invariants: injectInvariants ? injectInvariants.checked : true,
   };
   const started = performance.now();
   try {
@@ -1139,11 +1294,13 @@ async function sendMessage(text, opts = {}) {
       return;
     }
     renderRouteEvents(data.route_events);
-    createMessage("assistant", data.reply, "", {
+    createMessage("assistant", data.reply, data.conflicts?.length ? "message--refused" : "", {
       durationMs: data.duration_ms ?? durationMs,
       routeEvents: data.route_events,
       debug: data.debug,
       task: data.memory?.working?.task,
+      conflicts: data.conflicts || data.memory?.conflicts,
+      invariants: data.memory?.invariants,
     });
     renderMemoryMeta(data.memory);
     history.push({ role: "user", content: text });
@@ -1252,6 +1409,12 @@ if (taskDemoBtn) {
     if (!isLoading) runTaskDemo();
   });
 }
+if (invariantDemoBtn) {
+  invariantDemoBtn.addEventListener("click", () => {
+    if (!isLoading) runInvariantDemo();
+  });
+}
+if (saveInvariantBtn) saveInvariantBtn.addEventListener("click", saveInvariant);
 if (taskPauseBtn) taskPauseBtn.addEventListener("click", () => postTask("/api/task/event", { event: "pause" }, "Пауза"));
 if (taskResumeBtn) taskResumeBtn.addEventListener("click", () => postTask("/api/task/event", { event: "resume" }, "Продолжить"));
 if (taskAdvanceBtn) taskAdvanceBtn.addEventListener("click", () => postTask("/api/task/event", { event: "advance" }, "Дальше"));

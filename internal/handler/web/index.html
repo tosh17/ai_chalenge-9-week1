@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent</title>
-  <link rel="stylesheet" href="/static/style.css?v=day13-phases">
+  <link rel="stylesheet" href="/static/style.css?v=day14-inv2">
 </head>
 <body>
   <div class="layout" id="layout">
@@ -33,7 +33,7 @@
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
           <h2>Ассистент</h2>
-          <p>Пишите задачу — этап выставится сам. Новое сообщение прерывает текущий ответ. Рассуждения — в аккордеоне у реплики.</p>
+          <p>Пишите задачу. Инварианты в настройках нельзя нарушать: на конфликт будет отказ с объяснением.</p>
         </div>
       </main>
 
@@ -128,6 +128,35 @@
         <p class="nav__meta" id="profileMeta">—</p>
       </section>
 
+      <section class="nav__block invariant-form">
+        <h3>Инварианты</h3>
+        <p class="nav__hint" style="display:block">Жёсткие рамки вне диалога. Ассистент откажется их нарушать.</p>
+        <label class="nav__check"><input type="checkbox" id="injectInvariants" checked> подмешивать в запрос</label>
+        <ul id="invariantList" class="invariant-list"></ul>
+        <label class="profile-field">
+          <span>Вид</span>
+          <select id="invariantKind" class="nav__select" aria-label="Вид инварианта">
+            <option value="architecture">архитектура</option>
+            <option value="decision">решение</option>
+            <option value="stack">стек</option>
+            <option value="business">бизнес-правило</option>
+          </select>
+        </label>
+        <label class="profile-field">
+          <span>Название</span>
+          <input type="text" id="invariantTitle" placeholder="например Стек Go">
+        </label>
+        <label class="profile-field">
+          <span>Правило</span>
+          <textarea id="invariantRule" rows="2" placeholder="что нельзя нарушать"></textarea>
+        </label>
+        <label class="profile-field">
+          <span>Запрещённые слова</span>
+          <input type="text" id="invariantForbid" placeholder="python, mongodb — через запятую">
+        </label>
+        <button type="button" id="saveInvariantBtn" class="btn btn--accent btn--sm nav__btn">Добавить инвариант</button>
+      </section>
+
       <section class="nav__block">
         <h3>Память в запросе</h3>
         <div class="nav__checks">
@@ -149,6 +178,7 @@
         <button type="button" id="compareBtn" class="btn btn--ghost btn--sm nav__btn">Демо слоёв</button>
         <button type="button" id="profileDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо профилей</button>
         <button type="button" id="taskDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо паузы</button>
+        <button type="button" id="invariantDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо инвариантов</button>
         <a class="btn btn--ghost btn--sm nav__btn" href="/chatAi">ChatAI</a>
         <label class="debug-toggle nav__debug" title="Панель отладки">
           <input type="checkbox" id="debugToggle">
@@ -205,6 +235,6 @@
     </aside>
   </div>
 
-  <script src="/static/chat.js?v=day13-phases"></script>
+  <script src="/static/chat.js?v=day14-inv2"></script>
 </body>
 </html>

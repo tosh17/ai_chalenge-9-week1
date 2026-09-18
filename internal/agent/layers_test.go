@@ -197,6 +197,44 @@ func TestPromptInjectsActiveProfile(t *testing.T) {
 	}
 }
 
+func TestPromptInjectsInvariantsAndConflict(t *testing.T) {
+	dir := t.TempDir()
+	layers, err := memory.OpenLayers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := memory.OpenInvariantBook(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New("test").WithLayers(layers).WithInvariants(book).WithMemoryPolicy(MemoryPolicy{
+		STMWindowN: 4, InjectSTM: false, InjectWM: false, InjectLTM: false, InjectProfile: false, InjectInvariants: true,
+	})
+	msgs, info := a.buildMessagesLayers("Давай перепишем бэкенд на Python и MongoDB", a.MemoryPolicy())
+	blob := ""
+	for _, m := range msgs {
+		blob += m.Content + "\n"
+	}
+	if !strings.Contains(blob, "ИНВАРИАНТЫ") || !strings.Contains(blob, "КОНФЛИКТ") {
+		t.Fatalf("invariants/conflict missing:\n%s", blob)
+	}
+	if !info.InvariantsInPrompt || len(info.Conflicts) == 0 {
+		t.Fatalf("snapshot: %+v", info)
+	}
+
+	msgs, info = a.buildMessagesLayers("Как устроен handler в Go?", a.MemoryPolicy())
+	blob = ""
+	for _, m := range msgs {
+		blob += m.Content + "\n"
+	}
+	if strings.Contains(blob, "КОНФЛИКТ С ИНВАРИАНТОМ") {
+		t.Fatalf("false conflict:\n%s", blob)
+	}
+	if len(info.Conflicts) != 0 {
+		t.Fatalf("conflicts: %+v", info.Conflicts)
+	}
+}
+
 func TestExplicitStylePrefixUpdatesProfile(t *testing.T) {
 	d, src := parseExplicitRoute("#стиль коротко списком")
 	if src != "prefix" || d.Profile == nil || d.Profile.Style != "коротко списком" {
