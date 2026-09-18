@@ -107,7 +107,7 @@ func (a *Agent) RunMemoryDemo(ctx context.Context, providerID string) (MemoryDem
 		return MemoryDemoResult{}, err
 	}
 
-	demo := a.CloneWithLayers("day11-demo", layers)
+	demo := a.CloneWithLayers("day11-demo", layers).WithProfiles(nil)
 	demo.SetMemoryPolicy(MemoryPolicy{STMWindowN: 6, InjectSTM: true, InjectWM: true, InjectLTM: true})
 
 	scenario := make([]string, 0, len(memoryDemoSeed)+len(memoryDemoFillers)+1)
@@ -136,10 +136,10 @@ func (a *Agent) RunMemoryDemo(ctx context.Context, providerID string) (MemoryDem
 		title string
 		p     MemoryPolicy
 	}{
-		{"все слои", MemoryPolicy{STMWindowN: 6, InjectSTM: true, InjectWM: true, InjectLTM: true}},
-		{"без STM (только WM+LTM)", MemoryPolicy{STMWindowN: 6, InjectSTM: false, InjectWM: true, InjectLTM: true}},
-		{"без WM (STM+LTM)", MemoryPolicy{STMWindowN: 6, InjectSTM: true, InjectWM: false, InjectLTM: true}},
-		{"без LTM (STM+WM)", MemoryPolicy{STMWindowN: 6, InjectSTM: true, InjectWM: true, InjectLTM: false}},
+		{"все слои", MemoryPolicy{STMWindowN: 6, InjectSTM: true, InjectWM: true, InjectLTM: true, InjectProfile: true}},
+		{"без STM (только WM+LTM)", MemoryPolicy{STMWindowN: 6, InjectSTM: false, InjectWM: true, InjectLTM: true, InjectProfile: true}},
+		{"без WM (STM+LTM)", MemoryPolicy{STMWindowN: 6, InjectSTM: true, InjectWM: false, InjectLTM: true, InjectProfile: true}},
+		{"без LTM (STM+WM)", MemoryPolicy{STMWindowN: 6, InjectSTM: true, InjectWM: true, InjectLTM: false, InjectProfile: true}},
 	}
 
 	checks := memoryDemoChecks()

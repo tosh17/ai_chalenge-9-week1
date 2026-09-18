@@ -23,16 +23,24 @@ func main() {
 	if err != nil {
 		log.Fatalf("memory layers: %v", err)
 	}
-	log.Printf("memory layers: %s (stm=%d wm=%s ltm=%q)", layers.Dir(), layers.ShortTermLen(), layers.Working().Status, layers.LongTerm().Profile.Name)
+	profiles, err := memory.OpenProfileBook(cfg.MemoryDir)
+	if err != nil {
+		log.Fatalf("profiles: %v", err)
+	}
+	log.Printf("memory layers: %s (stm=%d wm=%s ltm=%q profile=%s/%s)",
+		layers.Dir(), layers.ShortTermLen(), layers.Working().Status, layers.LongTerm().Profile.Name,
+		profiles.ActiveID(), profiles.Active().Title)
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day11-memory-agent").
+	chatAgent := agent.New("day12-persona-agent").
 		WithLayers(layers).
+		WithProfiles(profiles).
 		WithMemoryPolicy(agent.MemoryPolicy{
-			STMWindowN: cfg.STMWindowN,
-			InjectSTM:  cfg.InjectSTM,
-			InjectWM:   cfg.InjectWM,
-			InjectLTM:  cfg.InjectLTM,
+			STMWindowN:    cfg.STMWindowN,
+			InjectSTM:     cfg.InjectSTM,
+			InjectWM:      cfg.InjectWM,
+			InjectLTM:     cfg.InjectLTM,
+			InjectProfile: cfg.InjectProfile,
 		}).
 		WithContextLimit(cfg.ContextTokenLimit).
 		WithStrategy(agent.ContextStrategy{
@@ -62,9 +70,9 @@ func main() {
 	st := chatAgent.Strategy()
 	mp := chatAgent.MemoryPolicy()
 	log.Printf(
-		"server listening on %s (agent: %s, default: %s, layers stm_window=%d inject stm=%v wm=%v ltm=%v, strategy: %s)",
+		"server listening on %s (agent: %s, default: %s, layers stm_window=%d inject stm=%v wm=%v ltm=%v profile=%v, strategy: %s)",
 		addr, chatAgent.Name(), chatAgent.DefaultProvider(),
-		mp.STMWindowN, mp.InjectSTM, mp.InjectWM, mp.InjectLTM, st.Kind,
+		mp.STMWindowN, mp.InjectSTM, mp.InjectWM, mp.InjectLTM, mp.InjectProfile, st.Kind,
 	)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("server: %v", err)

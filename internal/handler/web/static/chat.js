@@ -23,6 +23,21 @@ const compareBtn = document.getElementById("compareBtn");
 const injectSTM = document.getElementById("injectSTM");
 const injectWM = document.getElementById("injectWM");
 const injectLTM = document.getElementById("injectLTM");
+const injectProfile = document.getElementById("injectProfile");
+const profileSelect = document.getElementById("profileSelect");
+const profileName = document.getElementById("profileName");
+const profileRole = document.getElementById("profileRole");
+const profileLanguage = document.getElementById("profileLanguage");
+const profileStyle = document.getElementById("profileStyle");
+const profileStyleCustom = document.getElementById("profileStyleCustom");
+const profileFormat = document.getElementById("profileFormat");
+const profileFormatCustom = document.getElementById("profileFormatCustom");
+const profileConstraintList = document.getElementById("profileConstraintList");
+const profileConstraintInput = document.getElementById("profileConstraintInput");
+const addConstraintBtn = document.getElementById("addConstraintBtn");
+const profileMeta = document.getElementById("profileMeta");
+const saveProfileBtn = document.getElementById("saveProfileBtn");
+const profileDemoBtn = document.getElementById("profileDemoBtn");
 const stmWindow = document.getElementById("stmWindow");
 const stmMeta = document.getElementById("stmMeta");
 const stmPre = document.getElementById("stmPre");
@@ -38,9 +53,9 @@ const netBanner = document.getElementById("netBanner");
 const netBannerText = document.getElementById("netBannerText");
 const netRetryBtn = document.getElementById("netRetryBtn");
 
-const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day11";
-const PROVIDER_STORAGE_KEY = "day11-chat-provider";
-const UNSENT_STORAGE_KEY = "day11-unsent-messages";
+const DEBUG_STORAGE_KEY = "deepseek-chat-debug-day12";
+const PROVIDER_STORAGE_KEY = "day12-chat-provider";
+const UNSENT_STORAGE_KEY = "day12-unsent-messages";
 
 /** @type {{role: string, content: string}[]} */
 let history = [];
@@ -49,7 +64,12 @@ let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {{id: string, title: string, model: string, context_limit?: number}[]} */
 let providers = [];
-let currentPolicy = { stm_window_n: 8, inject_stm: true, inject_wm: true, inject_ltm: true };
+let currentPolicy = { stm_window_n: 8, inject_stm: true, inject_wm: true, inject_ltm: true, inject_profile: true };
+/** @type {{id: string, title?: string, name?: string, role?: string, language?: string, style?: string, format?: string, constraints?: string[]}[]} */
+let profileList = [];
+let activeProfileID = "";
+/** @type {string[]} */
+let constraintItems = [];
 /** @type {{text: string, userEl: HTMLElement, errorEl: HTMLElement}[]} */
 let pendingSends = [];
 let retryingQueue = false;
@@ -123,6 +143,11 @@ function setLoading(loading) {
   providerSelect.disabled = loading;
   if (compareBtn) compareBtn.disabled = loading;
   if (saveStrategyBtn) saveStrategyBtn.disabled = loading;
+  if (saveProfileBtn) saveProfileBtn.disabled = loading;
+  if (profileDemoBtn) profileDemoBtn.disabled = loading;
+  document.querySelectorAll(".profile-form input, .profile-form select, .profile-form textarea, .profile-form button").forEach((el) => {
+    el.disabled = loading;
+  });
   [clearStmBtn, clearWmBtn, clearLtmBtn].forEach((b) => {
     if (b) b.disabled = loading;
   });
@@ -294,6 +319,7 @@ function updateTokenMeter(tokens, session) {
 
 function policyLabel(p) {
   const on = [];
+  if (p.inject_profile !== false) on.push("PROF");
   if (p.inject_ltm) on.push("LTM");
   if (p.inject_wm) on.push("WM");
   if (p.inject_stm) on.push(`STM/${p.stm_window_n || 8}`);
@@ -305,9 +331,10 @@ function applyPolicyToForm(p) {
   injectSTM.checked = currentPolicy.inject_stm !== false;
   injectWM.checked = currentPolicy.inject_wm !== false;
   injectLTM.checked = currentPolicy.inject_ltm !== false;
+  if (injectProfile) injectProfile.checked = currentPolicy.inject_profile !== false;
   stmWindow.value = currentPolicy.stm_window_n || 8;
   strategyLabel.textContent = policyLabel(currentPolicy);
-  if (appSubtitle) appSubtitle.textContent = "#задача · #профиль · #решение · #запомни";
+  if (appSubtitle) appSubtitle.textContent = "#стиль · #формат · #ограничение";
 }
 
 function formatSTM(messages) {
@@ -358,6 +385,210 @@ function renderMemory(mem) {
   ltmMeta.textContent = bits.join(" · ");
   ltmPre.textContent = formatLTM(lt);
   if (mem.policy) applyPolicyToForm(mem.policy);
+  if (mem.profile) fillProfileForm(mem.profile, mem.profile.id || activeProfileID);
+}
+
+function setSelectOrCustom(selectEl, customEl, value) {
+  if (!selectEl) return;
+  const v = (value || "").trim();
+  const match = [...selectEl.options].some((o) => o.value === v && o.value !== "__custom");
+  if (match) {
+    selectEl.value = v;
+    if (customEl) {
+      customEl.hidden = true;
+      customEl.value = "";
+    }
+    return;
+  }
+  if (v) {
+    selectEl.value = "__custom";
+    if (customEl) {
+      customEl.hidden = false;
+      customEl.value = v;
+    }
+    return;
+  }
+  selectEl.selectedIndex = 0;
+  if (customEl) {
+    customEl.hidden = true;
+    customEl.value = "";
+  }
+}
+
+function valueFromSelectOrCustom(selectEl, customEl) {
+  if (!selectEl) return "";
+  if (selectEl.value === "__custom") return customEl ? customEl.value.trim() : "";
+  return selectEl.value.trim();
+}
+
+function toggleCustomField(selectEl, customEl) {
+  if (!selectEl || !customEl) return;
+  const custom = selectEl.value === "__custom";
+  customEl.hidden = !custom;
+  if (custom) customEl.focus();
+}
+
+function renderConstraintChips() {
+  if (!profileConstraintList) return;
+  profileConstraintList.innerHTML = "";
+  constraintItems.forEach((text, i) => {
+    const li = document.createElement("li");
+    li.className = "profile-chip";
+    const label = document.createElement("span");
+    label.textContent = text;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("aria-label", "убрать ограничение");
+    btn.textContent = "×";
+    btn.addEventListener("click", () => {
+      constraintItems.splice(i, 1);
+      renderConstraintChips();
+    });
+    li.append(label, btn);
+    profileConstraintList.appendChild(li);
+  });
+}
+
+function addConstraintFromInput() {
+  if (!profileConstraintInput) return;
+  const v = profileConstraintInput.value.trim();
+  if (!v) return;
+  if (!constraintItems.includes(v)) constraintItems.push(v);
+  profileConstraintInput.value = "";
+  renderConstraintChips();
+}
+
+function fillProfileForm(p, id) {
+  if (!p) p = {};
+  if (id) activeProfileID = id;
+  if (profileSelect && activeProfileID) profileSelect.value = activeProfileID;
+  if (profileName) profileName.value = p.name || "";
+  if (profileRole) profileRole.value = p.role || "";
+  if (profileLanguage) profileLanguage.value = p.language === "en" ? "en" : "ru";
+  setSelectOrCustom(profileStyle, profileStyleCustom, p.style);
+  setSelectOrCustom(profileFormat, profileFormatCustom, p.format);
+  constraintItems = Array.isArray(p.constraints) ? p.constraints.filter(Boolean) : [];
+  renderConstraintChips();
+  if (profileMeta) {
+    profileMeta.textContent = [p.title || id || "профиль", p.style].filter(Boolean).join(" · ");
+  }
+  const title = document.querySelector(".chat-bar__title");
+  if (title) title.textContent = p.name ? `Чат · ${p.name}` : "Чат";
+}
+
+function renderProfileBook(data) {
+  if (!data) return;
+  profileList = Array.isArray(data.profiles) ? data.profiles : [];
+  activeProfileID = data.active_id || "";
+  if (profileSelect) {
+    profileSelect.innerHTML = "";
+    for (const p of profileList) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.title || p.id;
+      profileSelect.appendChild(opt);
+    }
+    if (activeProfileID) profileSelect.value = activeProfileID;
+  }
+  const active = data.active || profileList.find((x) => x.id === activeProfileID) || {};
+  fillProfileForm(active, activeProfileID);
+}
+
+function profileFromForm() {
+  return {
+    id: (profileSelect && profileSelect.value) || activeProfileID || "custom",
+    title: (profileList.find((x) => x.id === ((profileSelect && profileSelect.value) || activeProfileID)) || {}).title,
+    name: profileName ? profileName.value.trim() : "",
+    role: profileRole ? profileRole.value.trim() : "",
+    language: profileLanguage ? profileLanguage.value : "ru",
+    style: valueFromSelectOrCustom(profileStyle, profileStyleCustom),
+    format: valueFromSelectOrCustom(profileFormat, profileFormatCustom),
+    constraints: constraintItems.slice(),
+  };
+}
+
+async function loadProfiles() {
+  try {
+    const res = await fetch("/api/profile");
+    if (!res.ok) return;
+    renderProfileBook(await res.json());
+  } catch {
+    /* ignore */
+  }
+}
+
+async function saveProfile() {
+  setLoading(true);
+  try {
+    const res = await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profileFromForm()),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Не удалось сохранить профиль", "message--error");
+      return;
+    }
+    renderProfileBook(data);
+    createMessage("system", `Профиль активен: ${data.active?.title || data.active_id}`, "message--system");
+  } catch {
+    createMessage("assistant", "Не удалось сохранить профиль", "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function activateProfile(id) {
+  if (!id || isLoading) return;
+  setLoading(true);
+  try {
+    const res = await fetch("/api/profile/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Не удалось переключить профиль", "message--error");
+      return;
+    }
+    renderProfileBook(data);
+    createMessage("system", `Профиль: ${data.active?.title || id} — стиль подмешивается в каждый запрос`, "message--system");
+  } catch {
+    createMessage("assistant", "Не удалось переключить профиль", "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function runProfileDemo() {
+  setLoading(true);
+  createMessage("user", "Демо: один вопрос — три профиля и без профиля");
+  createTypingIndicator();
+  const requestBody = { provider: currentProvider() };
+  const started = performance.now();
+  try {
+    const res = await fetch("/api/profile/demo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    const data = await res.json();
+    const durationMs = Math.round(performance.now() - started);
+    removeTypingIndicator();
+    logExchange({ url: "/api/profile/demo", requestBody, status: res.status, responseBody: data, durationMs });
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Демо профилей упало", "message--error", { durationMs });
+      return;
+    }
+    createMessage("assistant", data.report || JSON.stringify(data, null, 2), "message--mono", { durationMs });
+  } catch {
+    removeTypingIndicator();
+    createMessage("assistant", "Не удалось запустить демо профилей.", "message--error");
+  } finally {
+    setLoading(false);
+  }
 }
 
 function renderRouteEvents(events) {
@@ -368,6 +599,7 @@ function renderRouteEvents(events) {
     if (ev.wrote_stm) wrote.push("STM");
     if (ev.wrote_wm) wrote.push("WM");
     if (ev.wrote_ltm) wrote.push("LTM");
+    if (ev.wrote_profile) wrote.push("PROF");
     const chip = document.createElement("span");
     chip.className = "route-chip";
     chip.textContent = `${ev.source || "route"} → ${wrote.join("+") || "только STM позже"}`;
@@ -396,6 +628,7 @@ async function loadMemory() {
     const data = await res.json();
     if (data.policy) applyPolicyToForm(data.policy);
     renderMemory(data.memory);
+    if (data.profiles) renderProfileBook(data.profiles);
   } catch {
     /* ignore */
   }
@@ -407,6 +640,7 @@ async function savePolicy() {
     inject_stm: injectSTM.checked,
     inject_wm: injectWM.checked,
     inject_ltm: injectLTM.checked,
+    inject_profile: injectProfile ? injectProfile.checked : true,
   };
   setLoading(true);
   try {
@@ -619,6 +853,7 @@ async function sendMessage(text, opts = {}) {
     inject_stm: injectSTM.checked,
     inject_wm: injectWM.checked,
     inject_ltm: injectLTM.checked,
+    inject_profile: injectProfile ? injectProfile.checked : true,
   };
   const started = performance.now();
   try {
@@ -733,9 +968,33 @@ clearLtmBtn.addEventListener("click", () => {
 settingsBtn.addEventListener("click", () => setSettingsOpen(!layoutEl.classList.contains("layout--nav")));
 settingsCloseBtn.addEventListener("click", () => setSettingsOpen(false));
 saveStrategyBtn.addEventListener("click", savePolicy);
+if (saveProfileBtn) saveProfileBtn.addEventListener("click", saveProfile);
 compareBtn.addEventListener("click", () => {
   if (!isLoading) runCompare();
 });
+if (profileDemoBtn) {
+  profileDemoBtn.addEventListener("click", () => {
+    if (!isLoading) runProfileDemo();
+  });
+}
+if (profileSelect) {
+  profileSelect.addEventListener("change", () => activateProfile(profileSelect.value));
+}
+if (profileStyle) {
+  profileStyle.addEventListener("change", () => toggleCustomField(profileStyle, profileStyleCustom));
+}
+if (profileFormat) {
+  profileFormat.addEventListener("change", () => toggleCustomField(profileFormat, profileFormatCustom));
+}
+if (addConstraintBtn) addConstraintBtn.addEventListener("click", addConstraintFromInput);
+if (profileConstraintInput) {
+  profileConstraintInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      addConstraintFromInput();
+    }
+  });
+}
 
 providerSelect.addEventListener("change", () => {
   localStorage.setItem(PROVIDER_STORAGE_KEY, currentProvider());
@@ -758,7 +1017,7 @@ window.addEventListener("offline", updateNetBanner);
 setDebugMode(debugEnabled);
 setSettingsOpen(true);
 updateNetBanner();
-Promise.all([loadProviders(), loadMemory(), loadHistory()]).then(() => {
+Promise.all([loadProviders(), loadMemory(), loadHistory(), loadProfiles()]).then(() => {
   restoreUnsent();
   inputEl.focus();
 });

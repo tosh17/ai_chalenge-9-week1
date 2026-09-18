@@ -32,11 +32,12 @@ type Config struct {
 	FactsWindowN   int
 	BranchWindowN  int
 
-	MemoryDir  string
-	STMWindowN int
-	InjectSTM  bool
-	InjectWM   bool
-	InjectLTM  bool
+	MemoryDir     string
+	STMWindowN    int
+	InjectSTM     bool
+	InjectWM      bool
+	InjectLTM     bool
+	InjectProfile bool
 }
 
 func Load() (*Config, error) {
@@ -63,6 +64,7 @@ func Load() (*Config, error) {
 		InjectSTM:         getEnvBool("MEMORY_INJECT_STM", true),
 		InjectWM:          getEnvBool("MEMORY_INJECT_WM", true),
 		InjectLTM:         getEnvBool("MEMORY_INJECT_LTM", true),
+		InjectProfile:     getEnvBool("MEMORY_INJECT_PROFILE", true),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")

@@ -153,3 +153,53 @@ func TestClearLayerIsolation(t *testing.T) {
 		t.Fatalf("STM clear leaked")
 	}
 }
+
+func TestPromptInjectsActiveProfile(t *testing.T) {
+	dir := t.TempDir()
+	layers, err := memory.OpenLayers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := memory.OpenProfileBook(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = book.Activate("exec")
+	a := New("test").WithLayers(layers).WithProfiles(book).WithMemoryPolicy(MemoryPolicy{
+		STMWindowN: 4, InjectSTM: false, InjectWM: false, InjectLTM: false, InjectProfile: true,
+	})
+	msgs, info := a.buildMessagesLayers("что делать?", a.MemoryPolicy())
+	blob := ""
+	for _, m := range msgs {
+		blob += m.Content + "\n"
+	}
+	if !strings.Contains(blob, "ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ") || !strings.Contains(blob, "Ирина") {
+		t.Fatalf("profile missing:\n%s", blob)
+	}
+	if strings.Contains(blob, "=== ДОЛГОВРЕМЕННАЯ") {
+		t.Fatalf("LTM should be off")
+	}
+	if !info.ProfileInPrompt || info.Profile.Name != "Ирина" {
+		t.Fatalf("snapshot: %+v", info.Profile)
+	}
+
+	a.SetMemoryPolicy(MemoryPolicy{STMWindowN: 4, InjectProfile: false})
+	msgs, info = a.buildMessagesLayers("что делать?", a.MemoryPolicy())
+	blob = ""
+	for _, m := range msgs {
+		blob += m.Content + "\n"
+	}
+	if strings.Contains(blob, "ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ") {
+		t.Fatalf("profile should be excluded")
+	}
+	if info.ProfileInPrompt {
+		t.Fatal("profile_in_prompt")
+	}
+}
+
+func TestExplicitStylePrefixUpdatesProfile(t *testing.T) {
+	d, src := parseExplicitRoute("#стиль коротко списком")
+	if src != "prefix" || d.Profile == nil || d.Profile.Style != "коротко списком" {
+		t.Fatalf("%s %+v", src, d.Profile)
+	}
+}

@@ -26,13 +26,14 @@ func NewDual(compress, full *agent.Agent, model string) *Handler {
 }
 
 type chatRequestBody struct {
-	Message   string             `json:"message"`
-	History   []deepseek.Message `json:"history,omitempty"`
-	Provider  string             `json:"provider,omitempty"`
-	Compress  *bool              `json:"compress,omitempty"`
-	InjectSTM *bool              `json:"inject_stm,omitempty"`
-	InjectWM  *bool              `json:"inject_wm,omitempty"`
-	InjectLTM *bool              `json:"inject_ltm,omitempty"`
+	Message       string             `json:"message"`
+	History       []deepseek.Message `json:"history,omitempty"`
+	Provider      string             `json:"provider,omitempty"`
+	Compress      *bool              `json:"compress,omitempty"`
+	InjectSTM     *bool              `json:"inject_stm,omitempty"`
+	InjectWM      *bool              `json:"inject_wm,omitempty"`
+	InjectLTM     *bool              `json:"inject_ltm,omitempty"`
+	InjectProfile *bool              `json:"inject_profile,omitempty"`
 }
 
 type chatResponseBody struct {
@@ -155,13 +156,14 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.agent.Handle(r.Context(), agent.Request{
-		Message:   req.Message,
-		History:   req.History,
-		Provider:  req.Provider,
-		Compress:  req.Compress,
-		InjectSTM: req.InjectSTM,
-		InjectWM:  req.InjectWM,
-		InjectLTM: req.InjectLTM,
+		Message:       req.Message,
+		History:       req.History,
+		Provider:      req.Provider,
+		Compress:      req.Compress,
+		InjectSTM:     req.InjectSTM,
+		InjectWM:      req.InjectWM,
+		InjectLTM:     req.InjectLTM,
+		InjectProfile: req.InjectProfile,
 	})
 	if err != nil {
 		var overflow *agent.ErrContextOverflow
@@ -341,15 +343,85 @@ func (h *Handler) CompressionSet(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) MemoryGet(w http.ResponseWriter, r *http.Request) {
 	payload := map[string]any{
-		"policy": h.agent.MemoryPolicy(),
-		"memory": h.agent.MemorySnapshot(),
+		"policy":   h.agent.MemoryPolicy(),
+		"memory":   h.agent.MemorySnapshot(),
+		"profiles": h.profilePayload(),
 		"layers": []map[string]string{
 			{"id": "short_term", "title": "Краткосрочная", "desc": "Текущий диалог. Окно STM вытесняет старые реплики."},
 			{"id": "working", "title": "Рабочая", "desc": "Данные текущей задачи: цель, ограничения, черновики."},
-			{"id": "long_term", "title": "Долговременная", "desc": "Профиль, решения, знания между сессиями."},
+			{"id": "long_term", "title": "Долговременная", "desc": "Профиль-факты, решения, знания между сессиями."},
 		},
 	}
 	writeJSON(w, http.StatusOK, payload)
+}
+
+func (h *Handler) profilePayload() map[string]any {
+	book := h.agent.Profiles()
+	if book == nil {
+		return map[string]any{"active_id": "", "active": memory.UserProfile{}, "profiles": []memory.UserProfile{}}
+	}
+	return map[string]any{
+		"active_id": book.ActiveID(),
+		"active":    book.Active(),
+		"profiles":  book.List(),
+		"path":      book.Path(),
+	}
+}
+
+func (h *Handler) ProfileGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.profilePayload())
+}
+
+func (h *Handler) ProfileSave(w http.ResponseWriter, r *http.Request) {
+	var p memory.UserProfile
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "invalid json body"})
+		return
+	}
+	book := h.agent.Profiles()
+	if book == nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "profiles not enabled"})
+		return
+	}
+	if err := book.Upsert(p); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: err.Error()})
+		return
+	}
+	if p.ID != "" {
+		_ = book.Activate(p.ID)
+	}
+	writeJSON(w, http.StatusOK, h.profilePayload())
+}
+
+func (h *Handler) ProfileActivate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "id is required"})
+		return
+	}
+	book := h.agent.Profiles()
+	if book == nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "profiles not enabled"})
+		return
+	}
+	if err := book.Activate(req.ID); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.profilePayload())
+}
+
+func (h *Handler) ProfileDemo(w http.ResponseWriter, r *http.Request) {
+	var req providerOnlyBody
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	result, err := h.agent.RunProfileDemo(r.Context(), req.Provider)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) MemoryPolicySet(w http.ResponseWriter, r *http.Request) {

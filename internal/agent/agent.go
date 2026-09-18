@@ -40,9 +40,10 @@ type Request struct {
 	// Compress: nil = настройка агента; &true/&false = явный режим на этот ход.
 	Compress *bool
 	// Inject*: nil = политика агента; явные флаги — какие слои памяти подмешать в этот ход.
-	InjectSTM *bool
-	InjectWM  *bool
-	InjectLTM *bool
+	InjectSTM     *bool
+	InjectWM      *bool
+	InjectLTM     *bool
+	InjectProfile *bool
 }
 
 // Result — выход агента: ответ и служебные метаданные.
@@ -90,6 +91,7 @@ type Agent struct {
 	order        []string
 	memory       *memory.Store
 	layers       *memory.Layers
+	profiles     *memory.ProfileBook
 	memoryPolicy MemoryPolicy
 	compression  CompressionConfig
 	strategy     ContextStrategy

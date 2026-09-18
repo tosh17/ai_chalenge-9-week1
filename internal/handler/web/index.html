@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Springfield Agent — Day11 Memory</title>
+  <title>Springfield Agent — Day12 Persona</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=day12-fields3">
 </head>
 <body>
   <div class="sky" aria-hidden="true"></div>
@@ -17,7 +17,7 @@
         <img class="nav__logo" src="/static/img/agent-logo.png" alt="" width="36" height="36">
         <div class="nav__brand-text">
           <strong>Springfield</strong>
-          <span>Day11 · память</span>
+          <span>Day12 · персона</span>
         </div>
         <button type="button" id="settingsCloseBtn" class="nav__collapse" title="Свернуть меню" aria-label="Свернуть меню">‹</button>
       </div>
@@ -30,6 +30,60 @@
           <option value="deepseek">DeepSeek</option>
         </select>
         <p class="nav__meta nav__meta--sr" id="providerLabel">Local-Qwen</p>
+      </section>
+
+      <section class="nav__block profile-form">
+        <h3>Профиль</h3>
+        <label class="profile-field">
+          <span>Пресет</span>
+          <select id="profileSelect" class="nav__select" aria-label="Профиль пользователя"></select>
+        </label>
+        <label class="nav__check"><input type="checkbox" id="injectProfile" checked> в каждый запрос</label>
+        <label class="profile-field">
+          <span>Имя</span>
+          <input type="text" id="profileName" autocomplete="name" placeholder="как к вам обращаться">
+        </label>
+        <label class="profile-field">
+          <span>Роль</span>
+          <textarea id="profileRole" rows="2" placeholder="кто вы и чем занимаетесь"></textarea>
+        </label>
+        <label class="profile-field">
+          <span>Язык</span>
+          <select id="profileLanguage" class="nav__select" aria-label="Язык ответов">
+            <option value="ru">русский</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <div class="profile-field">
+          <label for="profileStyle">Стиль ответа</label>
+          <select id="profileStyle" class="nav__select" aria-label="Стиль ответа">
+            <option value="кратко, по делу, без воды">кратко, без воды</option>
+            <option value="строго формально, сначала вывод">формально, сначала вывод</option>
+            <option value="дружелюбно и просто, как наставник">просто, как наставник</option>
+            <option value="__custom">свой вариант…</option>
+          </select>
+          <input type="text" id="profileStyleCustom" class="profile-field__extra" placeholder="опишите стиль" hidden>
+        </div>
+        <div class="profile-field">
+          <label for="profileFormat">Формат</label>
+          <select id="profileFormat" class="nav__select" aria-label="Формат ответа">
+            <option value="маркированные списки и короткие пункты">маркированный список</option>
+            <option value="сначала 1–2 предложения вывода, затем нумерованные шаги">вывод, затем шаги</option>
+            <option value="короткие абзацы, каждый совет с бытовым примером">абзацы с примерами</option>
+            <option value="__custom">свой вариант…</option>
+          </select>
+          <input type="text" id="profileFormatCustom" class="profile-field__extra" placeholder="опишите формат" hidden>
+        </div>
+        <div class="profile-field">
+          <span>Ограничения</span>
+          <ul id="profileConstraintList" class="profile-chips"></ul>
+          <div class="profile-add">
+            <input type="text" id="profileConstraintInput" placeholder="добавить ограничение" autocomplete="off">
+            <button type="button" id="addConstraintBtn" class="profile-add__btn">добавить</button>
+          </div>
+        </div>
+        <button type="button" id="saveProfileBtn" class="btn btn--accent btn--sm nav__btn">Сохранить профиль</button>
+        <p class="nav__meta" id="profileMeta">—</p>
       </section>
 
       <section class="nav__block">
@@ -45,12 +99,13 @@
         </label>
         <button type="button" id="saveStrategyBtn" class="btn btn--accent btn--sm nav__btn">Сохранить</button>
         <p class="nav__meta" id="strategyLabel">LTM+WM+STM/8</p>
-        <p class="nav__hint" id="appSubtitle">#задача · #профиль · #решение · #запомни</p>
+        <p class="nav__hint" id="appSubtitle">#стиль · #формат · #ограничение</p>
       </section>
 
       <section class="nav__block nav__actions">
         <button type="button" id="clearBtn" class="btn btn--ghost btn--sm nav__btn">Новый диалог</button>
         <button type="button" id="compareBtn" class="btn btn--ghost btn--sm nav__btn">Демо слоёв</button>
+        <button type="button" id="profileDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо профилей</button>
         <a class="btn btn--ghost btn--sm nav__btn" href="/chatAi">ChatAI</a>
         <label class="debug-toggle nav__debug" title="Панель отладки">
           <input type="checkbox" id="debugToggle">
@@ -109,8 +164,8 @@
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
           <img class="welcome__donut" src="/static/img/agent-logo.png" alt="" width="56" height="56">
-          <h2>Три слоя памяти</h2>
-          <p>Диалог → STM. Задача → WM. Профиль и решения → LTM.</p>
+          <h2>Персональный агент</h2>
+          <p>Профиль (стиль, формат, ограничения) уходит в каждый запрос. Слои памяти — рядом.</p>
         </div>
       </main>
 
@@ -121,7 +176,7 @@
 
       <footer class="composer">
         <form id="chatForm" class="composer__form">
-          <textarea id="messageInput" class="composer__input" placeholder="Сообщение или #задача / #запомни…" rows="1" autofocus></textarea>
+          <textarea id="messageInput" class="composer__input" placeholder="Сообщение или #стиль / #формат…" rows="1" autofocus></textarea>
           <button type="submit" id="sendBtn" class="btn btn--primary" aria-label="Отправить">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
@@ -142,6 +197,6 @@
     </aside>
   </div>
 
-  <script src="/static/chat.js"></script>
+  <script src="/static/chat.js?v=day12-fields"></script>
 </body>
 </html>

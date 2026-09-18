@@ -55,6 +55,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/memory/policy", h.MemoryPolicySet)
 	mux.HandleFunc("POST /api/memory/write", h.MemoryWrite)
 	mux.HandleFunc("POST /api/memory/demo", h.MemoryDemo)
+	mux.HandleFunc("GET /api/profile", h.ProfileGet)
+	mux.HandleFunc("POST /api/profile", h.ProfileSave)
+	mux.HandleFunc("POST /api/profile/activate", h.ProfileActivate)
+	mux.HandleFunc("POST /api/profile/demo", h.ProfileDemo)
 	mux.HandleFunc("DELETE /api/memory/{layer}", h.MemoryClear)
 	mux.HandleFunc("DELETE /api/memory", h.MemoryClear)
 }

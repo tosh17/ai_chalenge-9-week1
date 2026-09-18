@@ -24,18 +24,20 @@ const memoryRouterSystem = `Ты маршрутизатор памяти. Отв
 
 // MemoryPolicy — что агент кладёт в промпт и размер STM-окна.
 type MemoryPolicy struct {
-	STMWindowN int  `json:"stm_window_n"`
-	InjectSTM  bool `json:"inject_stm"`
-	InjectWM   bool `json:"inject_wm"`
-	InjectLTM  bool `json:"inject_ltm"`
+	STMWindowN    int  `json:"stm_window_n"`
+	InjectSTM     bool `json:"inject_stm"`
+	InjectWM      bool `json:"inject_wm"`
+	InjectLTM     bool `json:"inject_ltm"`
+	InjectProfile bool `json:"inject_profile"`
 }
 
 func defaultMemoryPolicy() MemoryPolicy {
 	return MemoryPolicy{
-		STMWindowN: 8,
-		InjectSTM:  true,
-		InjectWM:   true,
-		InjectLTM:  true,
+		STMWindowN:    8,
+		InjectSTM:     true,
+		InjectWM:      true,
+		InjectLTM:     true,
+		InjectProfile: true,
 	}
 }
 
@@ -55,35 +57,40 @@ type MemoryInfo struct {
 	WorkingActive     bool                 `json:"working_active"`
 	Working           memory.WorkingState  `json:"working"`
 	LongTerm          memory.LongTermState `json:"long_term"`
+	Profile           memory.UserProfile   `json:"profile,omitempty"`
+	ProfileInPrompt   bool                 `json:"profile_in_prompt,omitempty"`
 	STMPreview        []deepseek.Message   `json:"stm_preview,omitempty"`
 	Paths             map[string]string    `json:"paths,omitempty"`
 }
 
 // MemoryRouteEvent — явный выбор, что и в какой слой записали.
 type MemoryRouteEvent struct {
-	Kind             string                `json:"kind"`   // "route"
-	Source           string                `json:"source"` // prefix | heuristic | llm
-	Reasons          []string              `json:"reasons"`
-	WroteSTM         bool                  `json:"wrote_stm"`
-	WroteWM          bool                  `json:"wrote_wm"`
-	WroteLTM         bool                  `json:"wrote_ltm"`
-	Working          *memory.WorkingPatch  `json:"working,omitempty"`
-	LongTerm         *memory.LongTermPatch `json:"long_term,omitempty"`
-	PromptTokens     int                   `json:"prompt_tokens,omitempty"`
-	CompletionTokens int                   `json:"completion_tokens,omitempty"`
-	TotalTokens      int                   `json:"total_tokens,omitempty"`
-	CostUSD          float64               `json:"cost_usd,omitempty"`
-	DurationMs       int64                 `json:"duration_ms,omitempty"`
-	System           string                `json:"system,omitempty"`
-	Prompt           string                `json:"prompt,omitempty"`
-	RawReply         string                `json:"raw_reply,omitempty"`
-	Error            string                `json:"error,omitempty"`
+	Kind             string                   `json:"kind"`   // "route"
+	Source           string                   `json:"source"` // prefix | heuristic | llm
+	Reasons          []string                 `json:"reasons"`
+	WroteSTM         bool                     `json:"wrote_stm"`
+	WroteWM          bool                     `json:"wrote_wm"`
+	WroteLTM         bool                     `json:"wrote_ltm"`
+	WroteProfile     bool                     `json:"wrote_profile,omitempty"`
+	Working          *memory.WorkingPatch     `json:"working,omitempty"`
+	LongTerm         *memory.LongTermPatch    `json:"long_term,omitempty"`
+	Profile          *memory.UserProfilePatch `json:"profile,omitempty"`
+	PromptTokens     int                      `json:"prompt_tokens,omitempty"`
+	CompletionTokens int                      `json:"completion_tokens,omitempty"`
+	TotalTokens      int                      `json:"total_tokens,omitempty"`
+	CostUSD          float64                  `json:"cost_usd,omitempty"`
+	DurationMs       int64                    `json:"duration_ms,omitempty"`
+	System           string                   `json:"system,omitempty"`
+	Prompt           string                   `json:"prompt,omitempty"`
+	RawReply         string                   `json:"raw_reply,omitempty"`
+	Error            string                   `json:"error,omitempty"`
 }
 
 type routeDecision struct {
-	Working  *memory.WorkingPatch  `json:"working,omitempty"`
-	LongTerm *memory.LongTermPatch `json:"long_term,omitempty"`
-	Reasons  []string              `json:"reasons"`
+	Working  *memory.WorkingPatch     `json:"working,omitempty"`
+	LongTerm *memory.LongTermPatch    `json:"long_term,omitempty"`
+	Profile  *memory.UserProfilePatch `json:"profile,omitempty"`
+	Reasons  []string                 `json:"reasons"`
 }
 
 // WithLayers подключает трёхслойную память. При наличии layers Handle идёт по модели слоёв.
@@ -121,8 +128,20 @@ func (a *Agent) CloneWithLayers(name string, layers *memory.Layers) *Agent {
 	clone := a.Clone(name)
 	clone.memoryPolicy = a.memoryPolicy
 	clone.layers = layers
+	clone.profiles = a.profiles
 	clone.systemPrompt = a.systemPrompt
 	return clone
+}
+
+// WithProfiles подключает книгу персонализации.
+func (a *Agent) WithProfiles(book *memory.ProfileBook) *Agent {
+	a.profiles = book
+	return a
+}
+
+// Profiles возвращает книгу профилей (может быть nil).
+func (a *Agent) Profiles() *memory.ProfileBook {
+	return a.profiles
 }
 
 func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID string, b backend) (Result, error) {
@@ -229,6 +248,9 @@ func (a *Agent) effectivePolicy(req Request) MemoryPolicy {
 	if req.InjectLTM != nil {
 		p.InjectLTM = *req.InjectLTM
 	}
+	if req.InjectProfile != nil {
+		p.InjectProfile = *req.InjectProfile
+	}
 	return p
 }
 
@@ -244,6 +266,9 @@ func (a *Agent) memorySnapshot(policy MemoryPolicy) MemoryInfo {
 	info.LongTerm = snap.LongTerm
 	info.WorkingActive = snap.Working.Status == memory.WorkingActive && snap.Working.Goal != ""
 	info.Paths = snap.Paths
+	if a.profiles != nil {
+		info.Profile = a.profiles.Active()
+	}
 	return info
 }
 
@@ -267,6 +292,13 @@ func (a *Agent) buildMessagesLayers(userMsg string, policy MemoryPolicy) ([]deep
 		system = system + "\n\n" + memorySystemPrompt
 	}
 	out = append(out, deepseek.Message{Role: "system", Content: system})
+
+	if policy.InjectProfile && a.profiles != nil {
+		prof := a.profiles.Active()
+		info.Profile = prof
+		info.ProfileInPrompt = true
+		out = append(out, deepseek.Message{Role: "system", Content: memory.FormatProfileBlock(prof)})
+	}
 
 	if policy.InjectLTM && a.layers != nil {
 		out = append(out, deepseek.Message{Role: "system", Content: formatLongTermBlock(info.LongTerm)})
@@ -420,9 +452,11 @@ func (a *Agent) routeToLayers(ctx context.Context, providerID, userMsg string) (
 func heurFillsGaps(llm, h routeDecision) bool {
 	llmWM := llm.Working != nil && workingPatchUseful(*llm.Working)
 	llmLTM := llm.LongTerm != nil && longTermPatchUseful(*llm.LongTerm)
+	llmP := llm.Profile != nil && llm.Profile.Useful()
 	hWM := h.Working != nil && workingPatchUseful(*h.Working)
 	hLTM := h.LongTerm != nil && longTermPatchUseful(*h.LongTerm)
-	return (hWM && !llmWM) || (hLTM && !llmLTM)
+	hP := h.Profile != nil && h.Profile.Useful()
+	return (hWM && !llmWM) || (hLTM && !llmLTM) || (hP && !llmP)
 }
 
 func mergeRoute(llm, h routeDecision) routeDecision {
@@ -432,6 +466,9 @@ func mergeRoute(llm, h routeDecision) routeDecision {
 	}
 	if h.LongTerm != nil && longTermPatchUseful(*h.LongTerm) {
 		out.LongTerm = mergeLongTermPatch(out.LongTerm, h.LongTerm)
+	}
+	if h.Profile != nil && h.Profile.Useful() {
+		out.Profile = mergeProfilePatch(out.Profile, h.Profile)
 	}
 	out.Reasons = mergeReasons(out.Reasons, h.Reasons)
 	return out
@@ -463,6 +500,33 @@ func mergeLongTermPatch(dst, src *memory.LongTermPatch) *memory.LongTermPatch {
 	return dst
 }
 
+func mergeProfilePatch(dst, src *memory.UserProfilePatch) *memory.UserProfilePatch {
+	if src == nil || !src.Useful() {
+		return dst
+	}
+	if dst == nil {
+		cp := *src
+		return &cp
+	}
+	if dst.Name == "" {
+		dst.Name = src.Name
+	}
+	if dst.Role == "" {
+		dst.Role = src.Role
+	}
+	if dst.Language == "" {
+		dst.Language = src.Language
+	}
+	if dst.Style == "" {
+		dst.Style = src.Style
+	}
+	if dst.Format == "" {
+		dst.Format = src.Format
+	}
+	dst.AddConstraints = append(dst.AddConstraints, src.AddConstraints...)
+	return dst
+}
+
 func (a *Agent) applyRoute(d routeDecision, ev *MemoryRouteEvent) error {
 	if len(d.Reasons) > 0 {
 		ev.Reasons = mergeReasons(ev.Reasons, d.Reasons)
@@ -480,6 +544,13 @@ func (a *Agent) applyRoute(d routeDecision, ev *MemoryRouteEvent) error {
 		}
 		ev.WroteLTM = true
 		ev.LongTerm = d.LongTerm
+	}
+	if d.Profile != nil && d.Profile.Useful() && a.profiles != nil {
+		if err := a.profiles.PatchActive(*d.Profile); err != nil {
+			return err
+		}
+		ev.WroteProfile = true
+		ev.Profile = d.Profile
 	}
 	return nil
 }
@@ -510,16 +581,19 @@ func longTermPatchUseful(p memory.LongTermPatch) bool {
 }
 
 var (
-	rePrefixWM      = regexp.MustCompile(`(?i)^#(?:wm|задача|task)\s+`)
-	rePrefixLTM     = regexp.MustCompile(`(?i)^#(?:ltm|запомни|remember)\s+`)
-	rePrefixProfile = regexp.MustCompile(`(?i)^#профиль\s+`)
-	rePrefixDec     = regexp.MustCompile(`(?i)^#решение\s+`)
-	rePrefixKnow    = regexp.MustCompile(`(?i)^#знание\s+`)
-	reName          = regexp.MustCompile(`(?i)(?:меня зовут|зови меня|моё имя|мое имя)\s+([A-Za-zА-Яа-яЁё-]{2,40})`)
-	reNameYa        = regexp.MustCompile(`(?i)(?:^|[\s,.;!?])я\s+([A-Za-zА-Яа-яЁё-]{2,40})(?:$|[\s,.;!?])`)
-	rePrefers       = regexp.MustCompile(`(?i)(?:предпочитаю|давай всегда|отвечай)\s+(.{3,80})`)
-	reOccupation    = regexp.MustCompile(`(?i)занимаюсь\s+(.{3,80}?)(?:\.|$|\n|хочу)`)
-	nameStopwords   = map[string]struct{}{
+	rePrefixWM         = regexp.MustCompile(`(?i)^#(?:wm|задача|task)\s+`)
+	rePrefixLTM        = regexp.MustCompile(`(?i)^#(?:ltm|запомни|remember)\s+`)
+	rePrefixProfile    = regexp.MustCompile(`(?i)^#профиль\s+`)
+	rePrefixDec        = regexp.MustCompile(`(?i)^#решение\s+`)
+	rePrefixKnow       = regexp.MustCompile(`(?i)^#знание\s+`)
+	rePrefixStyle      = regexp.MustCompile(`(?i)^#стиль\s+`)
+	rePrefixFormat     = regexp.MustCompile(`(?i)^#формат\s+`)
+	rePrefixConstraint = regexp.MustCompile(`(?i)^#ограничение\s+`)
+	reName             = regexp.MustCompile(`(?i)(?:меня зовут|зови меня|моё имя|мое имя)\s+([A-Za-zА-Яа-яЁё-]{2,40})`)
+	reNameYa           = regexp.MustCompile(`(?i)(?:^|[\s,.;!?])я\s+([A-Za-zА-Яа-яЁё-]{2,40})(?:$|[\s,.;!?])`)
+	rePrefers          = regexp.MustCompile(`(?i)(?:предпочитаю|давай всегда|отвечай)\s+(.{3,80})`)
+	reOccupation       = regexp.MustCompile(`(?i)занимаюсь\s+(.{3,80}?)(?:\.|$|\n|хочу)`)
+	nameStopwords      = map[string]struct{}{
 		"я": {}, "привет": {}, "хочу": {}, "хотел": {}, "буду": {}, "делаю": {},
 		"работаю": {}, "занимаюсь": {}, "живу": {}, "люблю": {}, "просто": {},
 		"очень": {}, "тут": {}, "здесь": {}, "сейчас": {}, "уже": {}, "бы": {},
@@ -547,7 +621,28 @@ func parseExplicitRoute(msg string) (routeDecision, string) {
 		body := strings.TrimSpace(rePrefixProfile.ReplaceAllString(trim, ""))
 		return routeDecision{
 			LongTerm: &memory.LongTermPatch{ProfileName: body},
-			Reasons:  []string{"LTM: явный префикс #профиль"},
+			Profile:  &memory.UserProfilePatch{Name: body},
+			Reasons:  []string{"LTM+профиль: явный префикс #профиль"},
+		}, "prefix"
+	case rePrefixStyle.MatchString(trim):
+		body := strings.TrimSpace(rePrefixStyle.ReplaceAllString(trim, ""))
+		return routeDecision{
+			LongTerm: &memory.LongTermPatch{Preferences: map[string]string{"style": body}},
+			Profile:  &memory.UserProfilePatch{Style: body},
+			Reasons:  []string{"профиль: явный префикс #стиль"},
+		}, "prefix"
+	case rePrefixFormat.MatchString(trim):
+		body := strings.TrimSpace(rePrefixFormat.ReplaceAllString(trim, ""))
+		return routeDecision{
+			LongTerm: &memory.LongTermPatch{Preferences: map[string]string{"format": body}},
+			Profile:  &memory.UserProfilePatch{Format: body},
+			Reasons:  []string{"профиль: явный префикс #формат"},
+		}, "prefix"
+	case rePrefixConstraint.MatchString(trim):
+		body := strings.TrimSpace(rePrefixConstraint.ReplaceAllString(trim, ""))
+		return routeDecision{
+			Profile: &memory.UserProfilePatch{AddConstraints: []string{body}},
+			Reasons: []string{"профиль: явный префикс #ограничение"},
 		}, "prefix"
 	case rePrefixDec.MatchString(trim):
 		body := strings.TrimSpace(rePrefixDec.ReplaceAllString(trim, ""))
@@ -587,6 +682,8 @@ func heuristicRoute(msg string) (routeDecision, string) {
 	if name := extractPersonName(msg); name != "" {
 		d.LongTerm = ensureLTM(d.LongTerm)
 		d.LongTerm.ProfileName = name
+		d.Profile = ensureProfile(d.Profile)
+		d.Profile.Name = name
 		d.Reasons = append(d.Reasons, "LTM: имя пользователя → профиль")
 	}
 	if strings.Contains(low, "предпочитаю") || strings.Contains(low, "отвечай кратко") || strings.Contains(low, "коротко") {
@@ -596,7 +693,29 @@ func heuristicRoute(msg string) (routeDecision, string) {
 			pref = strings.TrimSpace(m[1])
 		}
 		d.LongTerm.Preferences = map[string]string{"style": pref}
-		d.Reasons = append(d.Reasons, "LTM: предпочтение стиля → профиль")
+		d.Profile = ensureProfile(d.Profile)
+		d.Profile.Style = pref
+		if strings.Contains(low, "списк") {
+			d.Profile.Format = "маркированные списки"
+		}
+		d.Reasons = append(d.Reasons, "профиль: предпочтение стиля")
+	}
+	if strings.Contains(low, "формально") || strings.Contains(low, "на вы") {
+		d.Profile = ensureProfile(d.Profile)
+		if d.Profile.Style == "" {
+			d.Profile.Style = "формально, на «вы»"
+		}
+		d.Reasons = append(d.Reasons, "профиль: формальный стиль")
+	}
+	if strings.Contains(low, "без воды") {
+		d.Profile = ensureProfile(d.Profile)
+		d.Profile.AddConstraints = append(d.Profile.AddConstraints, "без воды")
+		d.Reasons = append(d.Reasons, "профиль: ограничение без воды")
+	}
+	if strings.Contains(low, "без эмодзи") || strings.Contains(low, "без emoji") {
+		d.Profile = ensureProfile(d.Profile)
+		d.Profile.AddConstraints = append(d.Profile.AddConstraints, "без эмодзи")
+		d.Reasons = append(d.Reasons, "профиль: ограничение без эмодзи")
 	}
 	if strings.Contains(low, "запомни") || strings.Contains(low, "навсегда") || strings.Contains(low, "в профиль") {
 		d.LongTerm = ensureLTM(d.LongTerm)
@@ -656,6 +775,13 @@ func extractPersonName(msg string) string {
 func ensureLTM(p *memory.LongTermPatch) *memory.LongTermPatch {
 	if p == nil {
 		return &memory.LongTermPatch{}
+	}
+	return p
+}
+
+func ensureProfile(p *memory.UserProfilePatch) *memory.UserProfilePatch {
+	if p == nil {
+		return &memory.UserProfilePatch{}
 	}
 	return p
 }
