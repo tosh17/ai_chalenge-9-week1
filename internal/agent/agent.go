@@ -62,6 +62,7 @@ type Result struct {
 	Memory          *MemoryInfo                `json:"memory,omitempty"`
 	RouteEvents     []MemoryRouteEvent         `json:"route_events,omitempty"`
 	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
+	Skips           []memory.IllegalShift      `json:"skips,omitempty"`
 	Debug           *deepseek.DebugInfo
 }
 

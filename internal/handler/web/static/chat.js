@@ -49,6 +49,7 @@ const taskAdvanceBtn = document.getElementById("taskAdvanceBtn");
 const taskSaveBtn = document.getElementById("taskSaveBtn");
 const taskSeedBtn = document.getElementById("taskSeedBtn");
 const taskDemoBtn = document.getElementById("taskDemoBtn");
+const lifecycleDemoBtn = document.getElementById("lifecycleDemoBtn");
 const invariantDemoBtn = document.getElementById("invariantDemoBtn");
 const invariantList = document.getElementById("invariantList");
 const invariantKind = document.getElementById("invariantKind");
@@ -218,6 +219,9 @@ function humanizeReason(raw) {
   if (/^инвариант:/i.test(s)) {
     return s.replace(/^инвариант:\s*/i, "Инвариант: ");
   }
+  if (/жизненный цикл/i.test(s)) {
+    return s.replace(/^жизненный цикл:\s*/i, "Жизненный цикл: ");
+  }
   s = s.replace(/^long_term:\s*/i, "");
   s = s.replace(/^LTM:\s*/i, "");
   s = s.replace(/^working(?:\.[a-zA-Z_]+)?(?:=[^:]*)?:\s*/i, "");
@@ -246,11 +250,12 @@ function buildTraceHTML(meta) {
   const debug = meta.debug;
   const task = meta.task || {};
   const conflicts = Array.isArray(meta.conflicts) ? meta.conflicts : [];
+  const skips = Array.isArray(meta.skips) ? meta.skips : [];
   const invariants = Array.isArray(meta.invariants) ? meta.invariants : [];
   const reasons = routes.flatMap((r) => r.reasons || []);
   const hasRouter = routes.some((r) => r.prompt || r.raw_reply || r.system);
-  if (!reasons.length && !debug && !task.stage && !hasRouter && !conflicts.length && !invariants.length) return "";
-  const title = conflicts.length ? `Отказ · ${phaseTitle(task)}` : phaseTitle(task);
+  if (!reasons.length && !debug && !task.stage && !hasRouter && !conflicts.length && !invariants.length && !skips.length) return "";
+  const title = (conflicts.length || skips.length) ? `Отказ · ${phaseTitle(task)}` : phaseTitle(task);
   const humanReasons = [...new Set(reasons.map(humanizeReason).filter(Boolean))];
   const writes = memoryWrites(routes);
   let body = `<p class="trace__lead">${escapeHTML(phaseLead(task))}</p>`;
@@ -263,6 +268,11 @@ function buildTraceHTML(meta) {
     body += `<section class="trace__sec trace__sec--conflict"><h4>Конфликт</h4><ul>${conflicts
       .map((c) => `<li>${escapeHTML(c.reason || c.title)}</li>`)
       .join("")}</ul><p>Отказываюсь предлагать решение, которое ломает рамку. Объясняю почему и что можно внутри неё.</p></section>`;
+  }
+  if (skips.length) {
+    body += `<section class="trace__sec trace__sec--conflict"><h4>Недопустимый переход</h4><ul>${skips
+      .map((s) => `<li>${escapeHTML(s.reason || "")}${s.allowed ? ` · можно: ${escapeHTML(s.allowed)}` : ""}</li>`)
+      .join("")}</ul><p>Этап не перепрыгиваю. Остаюсь в текущей фазе.</p></section>`;
   }
   if (task.expect) {
     body += `<p class="trace__expect">Жду: ${escapeHTML(task.expect)}</p>`;
@@ -320,6 +330,7 @@ function setLoading(loading) {
   if (saveProfileBtn) saveProfileBtn.disabled = loading;
   if (profileDemoBtn) profileDemoBtn.disabled = loading;
   if (taskDemoBtn) taskDemoBtn.disabled = loading;
+  if (lifecycleDemoBtn) lifecycleDemoBtn.disabled = loading;
   if (invariantDemoBtn) invariantDemoBtn.disabled = loading;
   if (saveInvariantBtn) saveInvariantBtn.disabled = loading;
   [clearStmBtn, clearWmBtn, clearLtmBtn].forEach((b) => {
@@ -955,6 +966,35 @@ async function runTaskDemo() {
   }
 }
 
+async function runLifecycleDemo() {
+  setLoading(true);
+  createMessage("user", "Демо: перепрыжка этапа, отказ и продолжение после паузы");
+  createTypingIndicator();
+  const requestBody = { provider: currentProvider() };
+  const started = performance.now();
+  try {
+    const res = await fetch("/api/task/lifecycle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    const data = await res.json();
+    const durationMs = Math.round(performance.now() - started);
+    removeTypingIndicator();
+    logExchange({ url: "/api/task/lifecycle", requestBody, status: res.status, responseBody: data, durationMs });
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Демо переходов упало", "message--error", { durationMs });
+      return;
+    }
+    createMessage("assistant", data.report || JSON.stringify(data, null, 2), "message--mono", { durationMs });
+  } catch {
+    removeTypingIndicator();
+    createMessage("assistant", "Не удалось запустить демо переходов.", "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
+
 async function runInvariantDemo() {
   setLoading(true);
   createMessage("user", "Демо: конфликт запроса с инвариантом и запрос внутри рамки");
@@ -1294,12 +1334,13 @@ async function sendMessage(text, opts = {}) {
       return;
     }
     renderRouteEvents(data.route_events);
-    createMessage("assistant", data.reply, data.conflicts?.length ? "message--refused" : "", {
+    createMessage("assistant", data.reply, (data.conflicts?.length || data.skips?.length) ? "message--refused" : "", {
       durationMs: data.duration_ms ?? durationMs,
       routeEvents: data.route_events,
       debug: data.debug,
       task: data.memory?.working?.task,
       conflicts: data.conflicts || data.memory?.conflicts,
+      skips: data.skips || data.memory?.skips,
       invariants: data.memory?.invariants,
     });
     renderMemoryMeta(data.memory);
@@ -1407,6 +1448,11 @@ if (profileDemoBtn) {
 if (taskDemoBtn) {
   taskDemoBtn.addEventListener("click", () => {
     if (!isLoading) runTaskDemo();
+  });
+}
+if (lifecycleDemoBtn) {
+  lifecycleDemoBtn.addEventListener("click", () => {
+    if (!isLoading) runLifecycleDemo();
   });
 }
 if (invariantDemoBtn) {

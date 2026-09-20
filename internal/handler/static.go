@@ -67,6 +67,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/task/event", h.TaskEvent)
 	mux.HandleFunc("POST /api/task/seed", h.TaskSeed)
 	mux.HandleFunc("POST /api/task/demo", h.TaskDemo)
+	mux.HandleFunc("POST /api/task/lifecycle", h.TaskLifecycle)
 	mux.HandleFunc("DELETE /api/memory/{layer}", h.MemoryClear)
 	mux.HandleFunc("DELETE /api/memory", h.MemoryClear)
 }

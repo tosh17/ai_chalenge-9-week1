@@ -120,8 +120,14 @@ func TestInferTaskWalksOneStageAtATime(t *testing.T) {
 		Task:      memory.TaskState{Stage: memory.StagePlanning, Step: "план"},
 	}
 	p := memory.InferTaskPatch(w, "проверь и закрывай")
-	if p.Stage != memory.StageExecution {
-		t.Fatalf("from planning jump at most one step, got %+v", p)
+	if p.Stage != "" && p.Stage != memory.StagePlanning {
+		t.Fatalf("from planning without approved plan must not jump, got %+v", p)
+	}
+
+	w.Task.Stage = memory.StageExecution
+	p = memory.InferTaskPatch(w, "принимаю, можно закрывать")
+	if p.Stage != memory.StageValidation {
+		t.Fatalf("from execution jump at most one step to validation, got %+v", p)
 	}
 }
 
@@ -147,5 +153,72 @@ func TestTaskFormatMentionsPauseAndDoneSoFar(t *testing.T) {
 	})
 	if !strings.Contains(strings.ToLower(resume), "не начинай") {
 		t.Fatalf("resume hint missing:\n%s", resume)
+	}
+}
+
+func TestCannotSkipToDoneWithoutValidation(t *testing.T) {
+	cur := memory.TaskState{Stage: memory.StagePlanning, Step: "план"}
+	_, err := memory.ApplyTaskEvent(cur, memory.TaskFinish, memory.WorkingPatch{})
+	if err == nil {
+		t.Fatal("finish from planning must fail")
+	}
+	_, err = memory.ApplyTaskEvent(cur, memory.TaskSet, memory.WorkingPatch{Stage: memory.StageDone})
+	if err == nil {
+		t.Fatal("set done from planning must fail")
+	}
+	_, err = memory.ApplyTaskEvent(memory.TaskState{Stage: memory.StageExecution}, memory.TaskFinish, memory.WorkingPatch{})
+	if err == nil {
+		t.Fatal("finish from execution must fail")
+	}
+	ok, err := memory.ApplyTaskEvent(memory.TaskState{Stage: memory.StageValidation, Step: "сверить"}, memory.TaskFinish, memory.WorkingPatch{})
+	if err != nil || ok.Stage != memory.StageDone {
+		t.Fatalf("finish from validation: %+v %v", ok, err)
+	}
+}
+
+func TestCannotJumpToExecutionFromIdle(t *testing.T) {
+	_, err := memory.ApplyTaskEvent(memory.TaskState{Stage: memory.StageIdle}, memory.TaskSet, memory.WorkingPatch{Stage: memory.StageExecution})
+	if err == nil {
+		t.Fatal("idle → execution must fail")
+	}
+}
+
+func TestFindIllegalShiftsImplementationBeforePlan(t *testing.T) {
+	t0 := memory.TaskState{Stage: memory.StagePlanning, Step: "собрать план"}
+	hits := memory.FindIllegalShifts(t0, "Сразу пиши весь код, план не нужен")
+	if len(hits) == 0 {
+		t.Fatal("expected skip")
+	}
+	ok := memory.FindIllegalShifts(t0, "план ок, приступай")
+	if len(ok) != 0 {
+		t.Fatalf("approved plan is legal: %+v", ok)
+	}
+	exec := memory.TaskState{Stage: memory.StageExecution, Step: "стены"}
+	doneSkip := memory.FindIllegalShifts(exec, "сразу закрывай без проверки")
+	if len(doneSkip) == 0 {
+		t.Fatal("expected no-final-without-validation")
+	}
+}
+
+func TestGuardWorkingPatchStripsIllegalFinish(t *testing.T) {
+	cur := memory.TaskState{Stage: memory.StagePlanning}
+	p, skip := memory.GuardWorkingPatch(cur, memory.WorkingPatch{Event: memory.TaskFinish})
+	if skip == nil {
+		t.Fatal("expected skip")
+	}
+	if p.Event != "" || p.Stage != "" {
+		t.Fatalf("illegal event must be stripped: %+v", p)
+	}
+}
+
+func TestPauseKeepsStageOnIllegalAdvance(t *testing.T) {
+	cur := memory.TaskState{Stage: memory.StageExecution, Paused: true, Step: "стены"}
+	_, err := memory.ApplyTaskEvent(cur, memory.TaskAdvance, memory.WorkingPatch{})
+	if err == nil {
+		t.Fatal("advance while paused")
+	}
+	resumed, err := memory.ApplyTaskEvent(cur, memory.TaskResume, memory.WorkingPatch{})
+	if err != nil || resumed.Paused || resumed.Stage != memory.StageExecution || resumed.Step != "стены" {
+		t.Fatalf("resume: %+v %v", resumed, err)
 	}
 }

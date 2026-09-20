@@ -52,6 +52,7 @@ type chatResponseBody struct {
 	Memory          *agent.MemoryInfo          `json:"memory,omitempty"`
 	RouteEvents     []agent.MemoryRouteEvent   `json:"route_events,omitempty"`
 	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
+	Skips           []memory.IllegalShift      `json:"skips,omitempty"`
 	Debug           *deepseek.DebugInfo        `json:"debug,omitempty"`
 }
 
@@ -220,6 +221,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		Memory:          result.Memory,
 		RouteEvents:     result.RouteEvents,
 		Conflicts:       result.Conflicts,
+		Skips:           result.Skips,
 		Debug:           result.Debug,
 	}
 	writeJSON(w, http.StatusOK, body)
@@ -540,7 +542,17 @@ func (h *Handler) TaskEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := layers.ApplyWorking(req); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": err.Error(),
+			"skip": memory.IllegalShift{
+				From:    layers.Working().Task.Stage,
+				Want:    memory.NormalizeStage(req.Stage),
+				Allowed: "",
+				Event:   req.Event,
+				Reason:  err.Error(),
+			},
+			"task": layers.Working().Task,
+		})
 		return
 	}
 	h.MemoryGet(w, r)
@@ -563,6 +575,17 @@ func (h *Handler) TaskDemo(w http.ResponseWriter, r *http.Request) {
 	var req providerOnlyBody
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	result, err := h.agent.RunTaskDemo(r.Context(), req.Provider)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) TaskLifecycle(w http.ResponseWriter, r *http.Request) {
+	var req providerOnlyBody
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	result, err := h.agent.RunLifecycleDemo(r.Context(), req.Provider)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
 		return

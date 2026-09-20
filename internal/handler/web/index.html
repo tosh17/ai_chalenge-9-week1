@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent</title>
-  <link rel="stylesheet" href="/static/style.css?v=day14-inv2">
+  <link rel="stylesheet" href="/static/style.css?v=day15-life">
 </head>
 <body>
   <div class="layout" id="layout">
@@ -33,7 +33,7 @@
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
           <h2>Ассистент</h2>
-          <p>Пишите задачу. Инварианты в настройках нельзя нарушать: на конфликт будет отказ с объяснением.</p>
+          <p>Пишите задачу. Этапы идут по порядку: нельзя реализовывать до утверждённого плана и закрывать без проверки.</p>
         </div>
       </main>
 
@@ -178,6 +178,7 @@
         <button type="button" id="compareBtn" class="btn btn--ghost btn--sm nav__btn">Демо слоёв</button>
         <button type="button" id="profileDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо профилей</button>
         <button type="button" id="taskDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо паузы</button>
+        <button type="button" id="lifecycleDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо переходов</button>
         <button type="button" id="invariantDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо инвариантов</button>
         <a class="btn btn--ghost btn--sm nav__btn" href="/chatAi">ChatAI</a>
         <label class="debug-toggle nav__debug" title="Панель отладки">
@@ -235,6 +236,6 @@
     </aside>
   </div>
 
-  <script src="/static/chat.js?v=day14-inv2"></script>
+  <script src="/static/chat.js?v=day15-life"></script>
 </body>
 </html>

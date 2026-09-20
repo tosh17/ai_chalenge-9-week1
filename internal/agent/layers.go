@@ -17,10 +17,10 @@ const memorySystemPrompt = `Ты агент с явной трёхслойной
 Используй слои так:
 - ДОЛГОВРЕМЕННАЯ: профиль, решения, знания — считай их истиной между сессиями.
 - РАБОЧАЯ: данные текущей задачи — цель, ограничения, черновики. Если слоя нет, задачи нет.
-- СОСТОЯНИЕ ЗАДАЧИ: фаза строго по порядку планирование → выполнение → проверка → готово.
+- СОСТОЯНИЕ ЗАДАЧИ: жизненный цикл планирование → выполнение → проверка → готово. Только соседний переход. Нельзя делать реализацию до утверждённого плана. Нельзя закрывать без проверки. На паузе этап не меняется.
 - ИНВАРИАНТЫ: архитектура, принятые решения, стек, бизнес-правила. Их нельзя нарушать. Если запрос им противоречит — откажи и объясни, не предлагай обход.
 - КРАТКОСРОЧНАЯ: только недавний диалог; старые реплики могли быть вытеснены окном.
-Работай только в текущей фазе. Не перескакивай. Этап ставит система по собранным данным, пользователь его не выбирает.
+Работай только в текущей фазе. Не перескакивай. Если запрос перепрыгивает этап — откажи и объясни, какой переход запрещён.
 Если в слое нет факта — не выдумывай его из «общей эрудиции диалога». Отвечай на языке пользователя.`
 
 const memoryRouterSystem = `Ты маршрутизатор памяти. Отвечай только валидным JSON-объектом.`
@@ -68,6 +68,7 @@ type MemoryInfo struct {
 	InvariantsInPrompt bool                       `json:"invariants_in_prompt,omitempty"`
 	InvariantPath      string                     `json:"invariant_path,omitempty"`
 	Conflicts          []memory.InvariantConflict `json:"conflicts,omitempty"`
+	Skips              []memory.IllegalShift      `json:"skips,omitempty"`
 	STMPreview         []deepseek.Message         `json:"stm_preview,omitempty"`
 	Paths              map[string]string          `json:"paths,omitempty"`
 }
@@ -94,6 +95,7 @@ type MemoryRouteEvent struct {
 	Prompt           string                   `json:"prompt,omitempty"`
 	RawReply         string                   `json:"raw_reply,omitempty"`
 	Error            string                   `json:"error,omitempty"`
+	Skips            []memory.IllegalShift    `json:"skips,omitempty"`
 }
 
 type routeDecision struct {
@@ -178,9 +180,15 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 
 	messages, memInfo := a.buildMessagesLayers(req.Message, policy)
 	conflicts := memInfo.Conflicts
+	skips := append([]memory.IllegalShift{}, memInfo.Skips...)
+	skips = append(skips, route.Skips...)
+	skips = uniqueIllegalShifts(skips)
 	inPrompt := memInfo.InvariantsInPrompt
 	for _, c := range conflicts {
 		route.Reasons = append(route.Reasons, "инвариант: отказ — «"+c.Title+"» ("+memory.KindTitle(c.Kind)+")")
+	}
+	for _, s := range skips {
+		route.Reasons = append(route.Reasons, "жизненный цикл: отказ — "+s.Reason)
 	}
 	limit := a.ContextLimit(providerID)
 	usage := a.buildTokenUsage(messages, req.Message, b.model, nil, limit)
@@ -195,6 +203,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 			Memory:      &memInfo,
 			RouteEvents: []MemoryRouteEvent{route},
 			Conflicts:   conflicts,
+			Skips:       skips,
 		}, &ErrContextOverflow{Usage: usage}
 	}
 
@@ -212,6 +221,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 			Memory:      &memInfo,
 			RouteEvents: []MemoryRouteEvent{route},
 			Conflicts:   conflicts,
+			Skips:       skips,
 			Debug:       &debug,
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
@@ -242,6 +252,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 				Memory:      &memInfo,
 				RouteEvents: []MemoryRouteEvent{route},
 				Conflicts:   conflicts,
+				Skips:       skips,
 			}, fmt.Errorf("agent %q: save stm: %w", a.name, saveErr)
 		}
 		discarded = n
@@ -252,6 +263,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 	memInfo.Discarded = discarded
 	memInfo.ShortTermInPrompt = countSTMInPrompt(messages)
 	memInfo.Conflicts = conflicts
+	memInfo.Skips = skips
 	memInfo.InvariantsInPrompt = inPrompt
 	debug := chat.Debug
 	return Result{
@@ -264,6 +276,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 		Memory:      &memInfo,
 		RouteEvents: []MemoryRouteEvent{route},
 		Conflicts:   conflicts,
+		Skips:       skips,
 		Debug:       &debug,
 	}, nil
 }
@@ -360,6 +373,11 @@ func (a *Agent) buildMessagesLayers(userMsg string, policy MemoryPolicy) ([]deep
 	if policy.InjectWM && a.layers != nil {
 		out = append(out, deepseek.Message{Role: "system", Content: formatWorkingBlock(info.Working)})
 		out = append(out, deepseek.Message{Role: "system", Content: memory.FormatTaskBlock(info.Working.Task)})
+		skips := memory.FindIllegalShifts(info.Working.Task, userMsg)
+		if len(skips) > 0 {
+			info.Skips = skips
+			out = append(out, deepseek.Message{Role: "system", Content: memory.FormatSkipBlock(skips)})
+		}
 	}
 
 	stmCount := 0
@@ -515,6 +533,15 @@ func (a *Agent) autoAdvanceTask(userMsg string, ev *MemoryRouteEvent) {
 	if !workingPatchUseful(patch) {
 		return
 	}
+	guarded, skip := memory.GuardWorkingPatch(a.layers.Working().Task, patch)
+	if skip != nil {
+		ev.Skips = append(ev.Skips, *skip)
+		ev.Reasons = append(ev.Reasons, "жизненный цикл: отказ — "+skip.Reason)
+		patch = guarded
+		if !workingPatchUseful(patch) {
+			return
+		}
+	}
 	if err := a.layers.ApplyWorking(patch); err != nil {
 		ev.Reasons = append(ev.Reasons, "автоэтап: "+err.Error())
 		return
@@ -612,11 +639,19 @@ func (a *Agent) applyRoute(d routeDecision, ev *MemoryRouteEvent) error {
 		ev.Reasons = mergeReasons(ev.Reasons, d.Reasons)
 	}
 	if d.Working != nil && workingPatchUseful(*d.Working) {
-		if err := a.layers.ApplyWorking(*d.Working); err != nil {
-			return err
+		guarded, skip := memory.GuardWorkingPatch(a.layers.Working().Task, *d.Working)
+		if skip != nil {
+			ev.Skips = append(ev.Skips, *skip)
+			ev.Reasons = append(ev.Reasons, "жизненный цикл: отказ — "+skip.Reason)
+			d.Working = &guarded
 		}
-		ev.WroteWM = true
-		ev.Working = d.Working
+		if workingPatchUseful(guarded) {
+			if err := a.layers.ApplyWorking(guarded); err != nil {
+				return err
+			}
+			ev.WroteWM = true
+			ev.Working = &guarded
+		}
 	}
 	if d.LongTerm != nil && longTermPatchUseful(*d.LongTerm) {
 		if err := a.layers.ApplyLongTerm(*d.LongTerm); err != nil {
@@ -639,6 +674,23 @@ func (a *Agent) applyRoute(d routeDecision, ev *MemoryRouteEvent) error {
 		ev.WroteInvariant = true
 	}
 	return nil
+}
+
+func uniqueIllegalShifts(in []memory.IllegalShift) []memory.IllegalShift {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]memory.IllegalShift, 0, len(in))
+	for _, s := range in {
+		key := s.From + "|" + s.Want + "|" + s.Reason
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 func mergeReasons(base, extra []string) []string {

@@ -272,9 +272,10 @@ func TestPromptInjectsTaskMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = layers.ApplyWorking(memory.WorkingPatch{
-		Goal: "дом", Event: memory.TaskSet, Stage: memory.StageExecution,
-		Step: "стены", Expect: "материал", AddDone: []string{"фундамент готов"},
+		Goal: "дом", Event: memory.TaskStart, AddDone: []string{"фундамент готов"},
 	})
+	_ = layers.ApplyTask(memory.TaskAdvance, memory.WorkingPatch{})
+	_ = layers.ApplyWorking(memory.WorkingPatch{Event: memory.TaskSet, Step: "стены", Expect: "материал"})
 	_ = layers.ApplyTask(memory.TaskPause, memory.WorkingPatch{})
 
 	a := New("test").WithLayers(layers).WithMemoryPolicy(MemoryPolicy{STMWindowN: 4, InjectSTM: false, InjectWM: true, InjectLTM: false})
@@ -307,5 +308,29 @@ func TestPromptInjectsTaskMachine(t *testing.T) {
 	}
 	if !strings.Contains(blob, "стены") {
 		t.Fatalf("resume lost step:\n%s", blob)
+	}
+}
+
+func TestPromptInjectsIllegalShift(t *testing.T) {
+	dir := t.TempDir()
+	layers, err := memory.OpenLayers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = layers.ApplyWorking(memory.WorkingPatch{Goal: "умный дом", Event: memory.TaskStart})
+	a := New("test").WithLayers(layers).WithMemoryPolicy(MemoryPolicy{InjectSTM: false, InjectWM: true, InjectLTM: false})
+	msgs, info := a.buildMessagesLayers("Сразу пиши весь код и закрывай задачу", a.MemoryPolicy())
+	blob := ""
+	for _, m := range msgs {
+		blob += m.Content + "\n"
+	}
+	if !strings.Contains(blob, "НЕДОПУСТИМЫЙ ПЕРЕХОД") {
+		t.Fatalf("skip block missing:\n%s", blob)
+	}
+	if len(info.Skips) == 0 {
+		t.Fatal("expected skips")
+	}
+	if layers.Working().Task.Stage != memory.StagePlanning {
+		t.Fatalf("must stay planning, got %s", layers.Working().Task.Stage)
 	}
 }

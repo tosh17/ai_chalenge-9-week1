@@ -40,18 +40,23 @@ func SeedExampleTask(layers *memory.Layers) error {
 }
 
 func seedTaskMachine(layers *memory.Layers) error {
+	if err := layers.ApplyWorking(memory.WorkingPatch{
+		Goal:     "каркасный дом, две бригады на объекте",
+		Event:    memory.TaskStart,
+		AddNotes: []string{"смета ещё не закрыта"},
+		AddDone:  []string{"план: каркас, две бригады, без воды в ответах"},
+	}); err != nil {
+		return err
+	}
+	if err := layers.ApplyTask(memory.TaskAdvance, memory.WorkingPatch{}); err != nil {
+		return err
+	}
 	return layers.ApplyWorking(memory.WorkingPatch{
-		Goal:      "каркасный дом, две бригады на объекте",
 		Event:     memory.TaskSet,
-		Stage:     memory.StageExecution,
 		Step:      "собрать стены 1 этажа",
 		StepIndex: 2,
 		Expect:    "пользователь подтверждает материал стен",
-		AddDone: []string{
-			"план: каркас, две бригады, без воды в ответах",
-			"выбран участок и ленточный фундамент",
-		},
-		AddNotes: []string{"смета ещё не закрыта"},
+		AddDone:   []string{"выбран участок и ленточный фундамент"},
 	})
 }
 

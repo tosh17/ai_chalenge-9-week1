@@ -36,7 +36,7 @@ func main() {
 		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day14-invariant-agent").
+	chatAgent := agent.New("day15-lifecycle-agent").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithInvariants(invariants).
