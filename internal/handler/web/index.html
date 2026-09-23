@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent</title>
-  <link rel="stylesheet" href="/static/style.css?v=day16-mcp">
+  <link rel="stylesheet" href="/static/style.css?v=day16-newchat2">
 </head>
 <body>
   <div class="layout" id="layout">
@@ -14,6 +14,7 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.7 1 1.2 1.5 1.2H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         </button>
         <span class="chat-bar__title" id="chatTitle">Чат</span>
+        <button type="button" id="clearBtn" class="btn btn--ghost btn--sm chat-bar__new">Новый чат</button>
         <nav class="phase-track" id="phaseTrack" aria-label="Фазы задачи">
           <span data-phase="planning">планирование</span>
           <span class="phase-track__arrow" aria-hidden="true">→</span>
@@ -174,7 +175,6 @@
       </section>
 
       <section class="nav__block nav__actions">
-        <button type="button" id="clearBtn" class="btn btn--ghost btn--sm nav__btn">Новый диалог</button>
         <button type="button" id="compareBtn" class="btn btn--ghost btn--sm nav__btn">Демо слоёв</button>
         <button type="button" id="profileDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо профилей</button>
         <button type="button" id="taskDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо паузы</button>
@@ -236,6 +236,6 @@
     </aside>
   </div>
 
-  <script src="/static/chat.js?v=day16-mcp"></script>
+  <script src="/static/chat.js?v=day16-newchat2"></script>
 </body>
 </html>

@@ -121,7 +121,7 @@ func main() {
 func attachMCP(chatAgent *agent.Agent, cfg *config.Config) (*mcp.Client, error) {
 	jar := cfg.MCPJar
 	if jar == "" {
-		jar = filepath.Join("..", "mcp", "open_meteo", "build", "libs", "open-meteo-0.1.0-all.jar")
+		jar = filepath.Join("mcp", "open_meteo", "build", "libs", "open-meteo-0.1.0-all.jar")
 	}
 	if _, err := os.Stat(jar); err != nil {
 		return nil, err

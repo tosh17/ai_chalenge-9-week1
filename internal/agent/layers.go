@@ -17,7 +17,7 @@ const memorySystemPrompt = `Ты агент с явной трёхслойной
 Используй слои так:
 - ДОЛГОВРЕМЕННАЯ: профиль, решения, знания — считай их истиной между сессиями.
 - РАБОЧАЯ: данные текущей задачи — цель, ограничения, черновики. Если слоя нет, задачи нет.
-- СОСТОЯНИЕ ЗАДАЧИ: жизненный цикл планирование → выполнение → проверка → готово. Только соседний переход. Нельзя делать реализацию до утверждённого плана. Нельзя закрывать без проверки. На паузе этап не меняется.
+- СОСТОЯНИЕ ЗАДАЧИ: жизненный цикл планирование → выполнение → проверка → готово. Только соседний переход. Нельзя закрывать без проверки. На паузе этап не меняется. Если данных уже хватает, система сама переводит планирование в выполнение до твоего ответа: тогда делай задачу, не проси разрешение и не объясняй автомат.
 - ИНВАРИАНТЫ: архитектура, принятые решения, стек, бизнес-правила. Их нельзя нарушать. Если запрос им противоречит — откажи и объясни, не предлагай обход.
 - КРАТКОСРОЧНАЯ: только недавний диалог; старые реплики могли быть вытеснены окном.
 Работай только в текущей фазе. Не перескакивай. Если запрос перепрыгивает этап — откажи и объясни, какой переход запрещён.
@@ -99,6 +99,7 @@ type MemoryRouteEvent struct {
 }
 
 type routeDecision struct {
+	Ready     bool                     `json:"ready,omitempty"`
 	Working   *memory.WorkingPatch     `json:"working,omitempty"`
 	LongTerm  *memory.LongTermPatch    `json:"long_term,omitempty"`
 	Profile   *memory.UserProfilePatch `json:"profile,omitempty"`
@@ -208,7 +209,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 	}
 
 	start := time.Now()
-	chat, toolEvents, err := a.completeWithTools(ctx, b.llm, messages)
+	chat, toolEvents, steps, err := a.completeWithTools(ctx, b.llm, messages)
 	duration := time.Since(start).Milliseconds()
 	if err != nil {
 		debug := chat.Debug
@@ -223,6 +224,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 			Conflicts:   conflicts,
 			Skips:       skips,
 			ToolEvents:  toolEvents,
+			Steps:       steps,
 			Debug:       &debug,
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
@@ -279,6 +281,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 		Conflicts:   conflicts,
 		Skips:       skips,
 		ToolEvents:  toolEvents,
+		Steps:       steps,
 		Debug:       &debug,
 	}, nil
 }
@@ -499,7 +502,7 @@ func (a *Agent) routeToLayers(ctx context.Context, providerID, userMsg string) (
 		if err := a.applyRoute(decision, &ev); err != nil {
 			return ev, err
 		}
-		a.autoAdvanceTask(userMsg, &ev)
+		a.autoAdvanceTask(userMsg, &ev, false)
 		return ev, nil
 	}
 
@@ -522,20 +525,35 @@ func (a *Agent) routeToLayers(ctx context.Context, providerID, userMsg string) (
 	if err := a.applyRoute(decision, &ev); err != nil {
 		return ev, err
 	}
-	a.autoAdvanceTask(userMsg, &ev)
+	a.autoAdvanceTask(userMsg, &ev, decision.Ready)
 	return ev, nil
 }
 
-func (a *Agent) autoAdvanceTask(userMsg string, ev *MemoryRouteEvent) {
+func (a *Agent) autoAdvanceTask(userMsg string, ev *MemoryRouteEvent, ready bool) {
 	if a.layers == nil {
 		return
 	}
-	before := a.layers.Working().Task
-	patch := memory.InferTaskPatch(a.layers.Working(), userMsg)
-	if !workingPatchUseful(patch) {
+	a.applyAutoPatch(ev, memory.InferTaskPatch(a.layers.Working(), userMsg))
+	if !ready {
 		return
 	}
-	guarded, skip := memory.GuardWorkingPatch(a.layers.Working().Task, patch)
+	task := a.layers.Working().Task
+	if task.Paused || memory.NormalizeStage(task.Stage) != memory.StagePlanning {
+		return
+	}
+	a.applyAutoPatch(ev, memory.WorkingPatch{
+		Event:  memory.TaskAdvance,
+		Step:   "выполнить согласованный план",
+		Expect: "сделать текущий шаг плана",
+	})
+}
+
+func (a *Agent) applyAutoPatch(ev *MemoryRouteEvent, patch memory.WorkingPatch) {
+	if a.layers == nil || !workingPatchUseful(patch) {
+		return
+	}
+	before := a.layers.Working().Task
+	guarded, skip := memory.GuardWorkingPatch(before, patch)
 	if skip != nil {
 		ev.Skips = append(ev.Skips, *skip)
 		ev.Reasons = append(ev.Reasons, "жизненный цикл: отказ — "+skip.Reason)
@@ -1022,9 +1040,12 @@ func buildMemoryRouterPrompt(userMsg string, wm memory.WorkingState, lt memory.L
 	var prompt strings.Builder
 	prompt.WriteString("Разложи реплику пользователя по слоям памяти агента.\n")
 	prompt.WriteString("Верни ТОЛЬКО JSON без markdown:\n")
-	prompt.WriteString(`{"working":{"goal":"","status":"","event":"","stage":"","step":"","expect":"","add_done":[],"constraints":[],"add_notes":[],"artifacts":{},"complete":false},"long_term":{"profile_name":"","language":"","preferences":{},"decisions":[{"key":"","value":"","why":""}],"knowledge":[{"topic":"","fact":""}]},"reasons":["слой: почему"]}` + "\n")
+	prompt.WriteString(`{"ready":false,"working":{"goal":"","status":"","event":"","stage":"","step":"","expect":"","add_done":[],"constraints":[],"add_notes":[],"artifacts":{},"complete":false},"long_term":{"profile_name":"","language":"","preferences":{},"decisions":[{"key":"","value":"","why":""}],"knowledge":[{"topic":"","fact":""}]},"reasons":["слой: почему"]}` + "\n")
 	prompt.WriteString("Правила выбора слоя:\n")
-	prompt.WriteString("- working: только данные ТЕКУЩЕЙ задачи (цель, ограничения, черновик, статус). Этап НЕ ставь: stage и event=advance/start оставь пустыми — автомат выставит фазу сам.\n")
+	prompt.WriteString("- ready=true, если по задаче уже можно работать и новые вопросы ничего не изменят. Сюда же одно первое сообщение, если в нём уже есть цель и всё, без чего нельзя начать.\n")
+	prompt.WriteString("- ready=false, если без ответа пользователя действие было бы гаданием, или человек ещё докидывает условия.\n")
+	prompt.WriteString("- stage и event=advance не ставь. ready только сигнал перейти из планирования в выполнение.\n")
+	prompt.WriteString("- working: только данные ТЕКУЩЕЙ задачи (цель, ограничения, черновик, статус).\n")
 	prompt.WriteString("- event только pause | resume. complete=true только при явном «закрываем / принимаю / всё сделано».\n")
 	prompt.WriteString("- «пауза/подожди» → event=pause. «продолжи» → event=resume (этап и шаг не менять).\n")
 	prompt.WriteString("- черновики и результаты клади в artifacts, не в stage.\n")

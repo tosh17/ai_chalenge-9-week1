@@ -1490,6 +1490,14 @@ a.btn.nav__btn {
   letter-spacing: -0.02em;
 }
 
+.chat-bar__new {
+  flex-shrink: 0;
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+}
+
 .phase-track {
   display: flex;
   align-items: center;
@@ -1763,14 +1771,61 @@ a.btn.nav__btn {
   background: #fff6f5;
 }
 
-.tool-calls {
-  margin: 0 0 6px;
+.turn-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
 }
 
-.tool-call {
-  margin: 0;
+.turn-step {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.turn-step summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 6px 10px;
+  color: var(--text);
+}
+
+.turn-step summary::-webkit-details-marker {
+  display: none;
+}
+
+.turn-step__body {
+  padding: 0 10px 8px;
+}
+
+.turn-step__url,
+.turn-step__err {
+  margin: 0 0 6px;
+  word-break: break-all;
+}
+
+.turn-step__err {
+  color: var(--error);
+}
+
+.turn-step h4 {
+  margin: 8px 0 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.turn-step pre {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
 .trace-raw summary {

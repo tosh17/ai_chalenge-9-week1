@@ -128,13 +128,13 @@ function createMessage(role, content, extraClass = "", meta = {}) {
     ? `<span class="message__time">${escapeHTML(formatDuration(meta.durationMs))}</span>`
     : "";
   const trace = !isUser && !isSystem ? buildTraceHTML(meta) : "";
-  const tools = !isUser && !isSystem ? toolEventsHTML(meta.toolEvents) : "";
+  const steps = !isUser && !isSystem ? turnStepsHTML(meta.steps) : "";
   el.innerHTML = `
     <div class="message__avatar">${avatar}</div>
     <div class="message__body">
-      ${tools}
       ${trace}
       <div class="message__bubble">${escapeHTML(content)}</div>
+      ${steps}
       ${timeLabel}
     </div>
   `;
@@ -143,18 +143,33 @@ function createMessage(role, content, extraClass = "", meta = {}) {
   return el;
 }
 
-function toolEventsHTML(events) {
-  if (!Array.isArray(events) || !events.length) return "";
-  return `<div class="tool-calls">${events.map((ev) => {
-    let args = "";
+function prettyPayload(value) {
+  if (value == null || value === "") return "";
+  if (typeof value === "string") {
     try {
-      const parsed = JSON.parse(ev.arguments || "{}");
-      if (parsed && parsed.city) args = ` · ${parsed.city}`;
+      return JSON.stringify(JSON.parse(value), null, 2);
     } catch {
-      args = "";
+      return value;
     }
-    const mark = ev.is_error ? " · ошибка" : "";
-    return `<p class="tool-call">MCP ${escapeHTML(ev.name || "tool")}${escapeHTML(args)}${escapeHTML(mark)}</p>`;
+  }
+  return formatJSON(value);
+}
+
+function turnStepsHTML(steps) {
+  if (!Array.isArray(steps) || !steps.length) return "";
+  return `<div class="turn-steps">${steps.map((step, i) => {
+    const bits = [`${i + 1}. ${step.title || step.kind || "шаг"}`];
+    if (step.status) bits.push(String(step.status));
+    if (step.duration_ms) bits.push(`${step.duration_ms} мс`);
+    if (step.error) bits.push("ошибка");
+    let body = "";
+    if (step.url) body += `<p class="turn-step__url">${escapeHTML(step.url)}</p>`;
+    if (step.error) body += `<p class="turn-step__err">${escapeHTML(step.error)}</p>`;
+    const request = prettyPayload(step.request);
+    const response = prettyPayload(step.response);
+    if (request) body += `<h4>Запрос</h4><pre>${escapeHTML(request)}</pre>`;
+    if (response) body += `<h4>Ответ</h4><pre>${escapeHTML(response)}</pre>`;
+    return `<details class="turn-step"><summary>${escapeHTML(bits.join(" · "))}</summary><div class="turn-step__body">${body}</div></details>`;
   }).join("")}</div>`;
 }
 
@@ -1132,7 +1147,9 @@ async function clearLayer(layer, reloadChat) {
       }
       updateTokenMeter(null, null);
     }
-    createMessage("system", `Очищен слой: ${layer}`, "message--system");
+    if (layer !== "all") {
+      createMessage("system", `Очищен слой: ${layer}`, "message--system");
+    }
   } catch {
     createMessage("assistant", "Не удалось очистить слой", "message--error");
   } finally {
@@ -1347,6 +1364,7 @@ async function sendMessage(text, opts = {}) {
         routeEvents: data.route_events,
         debug: data.debug,
         task: data.memory?.working?.task,
+        steps: data.steps,
       });
       return;
     }
@@ -1359,7 +1377,7 @@ async function sendMessage(text, opts = {}) {
       conflicts: data.conflicts || data.memory?.conflicts,
       skips: data.skips || data.memory?.skips,
       invariants: data.memory?.invariants,
-      toolEvents: data.tool_events,
+      steps: data.steps,
     });
     renderMemoryMeta(data.memory);
     history.push({ role: "user", content: text });
@@ -1432,7 +1450,7 @@ inputEl.addEventListener("keydown", (e) => {
 inputEl.addEventListener("input", autoResizeTextarea);
 
 clearBtn.addEventListener("click", () => {
-  if (!isLoading) clearLayer("short_term", true);
+  if (!isLoading) clearLayer("all", true);
 });
 clearStmBtn.addEventListener("click", () => {
   if (!isLoading) clearLayer("short_term", true);

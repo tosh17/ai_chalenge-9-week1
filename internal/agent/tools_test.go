@@ -52,16 +52,19 @@ func (s *stubTools) Tools() []deepseek.Tool {
 	}}
 }
 
-func (s *stubTools) Call(ctx context.Context, name, arguments string) (string, bool, error) {
+func (s *stubTools) Call(ctx context.Context, name, arguments string) (ToolExchange, error) {
 	s.called = name + " " + arguments
-	return "Москва 17°C", false, nil
+	return ToolExchange{
+		Text:    "Москва 17°C",
+		Request: []byte(`{"jsonrpc":"2.0","method":"tools/call"}`),
+	}, nil
 }
 
 func TestCompleteWithTools(t *testing.T) {
 	stub := &stubTools{}
 	llm := &scriptLLM{}
 	a := New("day16").WithTools(stub)
-	chat, events, err := a.completeWithTools(context.Background(), llm, []deepseek.Message{
+	chat, events, steps, err := a.completeWithTools(context.Background(), llm, []deepseek.Message{
 		{Role: "user", Content: "какая погода в Москве?"},
 	})
 	if err != nil {
@@ -78,5 +81,8 @@ func TestCompleteWithTools(t *testing.T) {
 	}
 	if llm.calls != 2 {
 		t.Fatalf("model calls: %d", llm.calls)
+	}
+	if len(steps) != 3 || steps[0].Kind != "llm" || steps[1].Kind != "mcp" || steps[2].Kind != "llm" {
+		t.Fatalf("steps: %+v", steps)
 	}
 }

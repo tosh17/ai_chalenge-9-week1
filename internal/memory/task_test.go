@@ -110,6 +110,13 @@ func TestInferTaskAdvancesWithCollectedData(t *testing.T) {
 	if p.Stage != "" {
 		t.Fatalf("paused must not auto-advance: %+v", p)
 	}
+
+	for _, msg := range []string{"да", "да.", "выполнение", "вся инфа есть"} {
+		p = memory.InferTaskPatch(exec, msg)
+		if p.Stage != memory.StageExecution {
+			t.Fatalf("%q should enter execution, got %+v", msg, p)
+		}
+	}
 }
 
 func TestInferTaskWalksOneStageAtATime(t *testing.T) {

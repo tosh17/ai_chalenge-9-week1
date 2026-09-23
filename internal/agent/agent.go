@@ -60,6 +60,7 @@ type Result struct {
 	Strategy        *StrategyInfo              `json:"strategy,omitempty"`
 	FactEvents      []FactUpdateEvent          `json:"fact_events,omitempty"`
 	ToolEvents      []ToolEvent                `json:"tool_events,omitempty"`
+	Steps           []TurnStep                 `json:"steps,omitempty"`
 	Memory          *MemoryInfo                `json:"memory,omitempty"`
 	RouteEvents     []MemoryRouteEvent         `json:"route_events,omitempty"`
 	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
@@ -491,7 +492,7 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 	}
 
 	start := time.Now()
-	chat, toolEvents, err := a.completeWithTools(ctx, b.llm, messages)
+	chat, toolEvents, steps, err := a.completeWithTools(ctx, b.llm, messages)
 	duration := time.Since(start).Milliseconds()
 	if err != nil {
 		debug := chat.Debug
@@ -506,6 +507,7 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 			Strategy:        &stratInfo,
 			FactEvents:      factEvents,
 			ToolEvents:      toolEvents,
+			Steps:           steps,
 			Debug:           &debug,
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
@@ -573,6 +575,7 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 		Strategy:        &stratInfo,
 		FactEvents:      factEvents,
 		ToolEvents:      toolEvents,
+		Steps:           steps,
 		Debug:           &debug,
 	}, nil
 }

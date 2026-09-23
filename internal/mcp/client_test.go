@@ -45,7 +45,7 @@ func TestClientRoundtrip(t *testing.T) {
 func TestOpenMeteoLive(t *testing.T) {
 	jar := os.Getenv("MCP_JAR")
 	if jar == "" {
-		jar = filepath.Join("..", "..", "..", "mcp", "open_meteo", "build", "libs", "open-meteo-0.1.0-all.jar")
+		jar = filepath.Join("..", "..", "mcp", "open_meteo", "build", "libs", "open-meteo-0.1.0-all.jar")
 	}
 	if _, err := os.Stat(jar); err != nil {
 		t.Skip("open-meteo jar not built")

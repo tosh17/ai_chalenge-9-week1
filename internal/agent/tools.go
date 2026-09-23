@@ -16,16 +16,38 @@ const mcpToolHint = `ИНСТРУМЕНТЫ MCP: если пользовател
 
 // ToolEvent — один вызов MCP за ход диалога.
 type ToolEvent struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments,omitempty"`
-	Result    string `json:"result"`
-	IsError   bool   `json:"is_error,omitempty"`
+	Name      string          `json:"name"`
+	Arguments string          `json:"arguments,omitempty"`
+	Result    string          `json:"result"`
+	IsError   bool            `json:"is_error,omitempty"`
+	Request   json.RawMessage `json:"request,omitempty"`
+	Response  json.RawMessage `json:"response,omitempty"`
+}
+
+// ToolExchange — ответ инструмента и сырой запрос/ответ MCP.
+type ToolExchange struct {
+	Text     string
+	IsError  bool
+	Request  json.RawMessage
+	Response json.RawMessage
+}
+
+// TurnStep — один шаг хода: запрос к модели или вызов MCP.
+type TurnStep struct {
+	Kind       string          `json:"kind"`
+	Title      string          `json:"title"`
+	URL        string          `json:"url,omitempty"`
+	Status     int             `json:"status,omitempty"`
+	DurationMs int64           `json:"duration_ms,omitempty"`
+	Request    json.RawMessage `json:"request,omitempty"`
+	Response   json.RawMessage `json:"response,omitempty"`
+	Error      string          `json:"error,omitempty"`
 }
 
 // ToolSource — внешние инструменты, которые модель может вызвать.
 type ToolSource interface {
 	Tools() []deepseek.Tool
-	Call(ctx context.Context, name, arguments string) (text string, isError bool, err error)
+	Call(ctx context.Context, name, arguments string) (ToolExchange, error)
 }
 
 // MCPTools адаптирует stdio-клиент MCP к агенту.
@@ -53,22 +75,28 @@ func (m MCPTools) Tools() []deepseek.Tool {
 	return out
 }
 
-func (m MCPTools) Call(ctx context.Context, name, arguments string) (string, bool, error) {
+func (m MCPTools) Call(ctx context.Context, name, arguments string) (ToolExchange, error) {
 	if m.Client == nil {
-		return "", true, fmt.Errorf("mcp client is nil")
+		return ToolExchange{IsError: true}, fmt.Errorf("mcp client is nil")
 	}
 	raw := strings.TrimSpace(arguments)
 	if raw == "" {
 		raw = "{}"
 	}
 	if !json.Valid([]byte(raw)) {
-		return "", true, fmt.Errorf("arguments are not json")
+		return ToolExchange{IsError: true}, fmt.Errorf("arguments are not json")
 	}
 	res, err := m.Client.Call(ctx, name, json.RawMessage(raw))
-	if err != nil {
-		return "", true, err
+	ex := ToolExchange{
+		Text:     res.Text,
+		IsError:  res.IsError,
+		Request:  res.Request,
+		Response: res.Response,
 	}
-	return res.Text, res.IsError, nil
+	if err != nil {
+		return ex, err
+	}
+	return ex, nil
 }
 
 // WithTools подключает MCP. Клоны агента инструменты не наследуют.
@@ -86,31 +114,37 @@ type toolLLM interface {
 	ChatTools(ctx context.Context, messages []deepseek.Message, tools []deepseek.Tool) (deepseek.ChatResult, error)
 }
 
-func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deepseek.Message) (deepseek.ChatResult, []ToolEvent, error) {
+func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deepseek.Message) (deepseek.ChatResult, []ToolEvent, []TurnStep, error) {
 	tools := a.toolDefs()
 	caller, ok := llm.(toolLLM)
 	if !ok || len(tools) == 0 {
 		chat, err := llm.Chat(ctx, messages)
-		return chat, nil, err
+		return chat, nil, []TurnStep{llmStep(1, chat, err)}, err
 	}
 
 	prompt := append([]deepseek.Message(nil), messages...)
 	prompt = append(prompt, deepseek.Message{Role: "system", Content: mcpToolHint})
 
 	var events []ToolEvent
+	var steps []TurnStep
 	var last deepseek.ChatResult
+	apiN := 0
 	for round := 0; round < maxToolRounds; round++ {
 		chat, err := caller.ChatTools(ctx, prompt, tools)
+		apiN++
+		steps = append(steps, llmStep(apiN, chat, err))
 		if err != nil && len(events) == 0 && chat.Debug.StatusCode == 400 {
 			plain, plainErr := llm.Chat(ctx, messages)
-			return plain, nil, plainErr
+			apiN++
+			steps = append(steps, llmStep(apiN, plain, plainErr))
+			return plain, nil, steps, plainErr
 		}
 		if err != nil {
-			return chat, events, err
+			return chat, events, steps, err
 		}
 		last = chat
 		if len(chat.ToolCalls) == 0 {
-			return chat, events, nil
+			return chat, events, steps, nil
 		}
 		prompt = append(prompt, deepseek.Message{
 			Role:      "assistant",
@@ -120,6 +154,7 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 		for _, call := range chat.ToolCalls {
 			ev := a.execTool(ctx, call)
 			events = append(events, ev)
+			steps = append(steps, mcpStep(ev))
 			prompt = append(prompt, deepseek.Message{
 				Role:       "tool",
 				ToolCallID: call.ID,
@@ -129,10 +164,52 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 		}
 	}
 	if strings.TrimSpace(last.Reply) != "" && len(last.ToolCalls) == 0 {
-		return last, events, nil
+		return last, events, steps, nil
 	}
 	final, err := caller.ChatTools(ctx, prompt, nil)
-	return final, events, err
+	apiN++
+	steps = append(steps, llmStep(apiN, final, err))
+	return final, events, steps, err
+}
+
+func llmStep(n int, chat deepseek.ChatResult, err error) TurnStep {
+	step := TurnStep{
+		Kind:       "llm",
+		Title:      fmt.Sprintf("API · запрос %d", n),
+		URL:        chat.Debug.URL,
+		Status:     chat.Debug.StatusCode,
+		DurationMs: chat.Debug.DurationMs,
+		Request:    chat.Debug.Request,
+		Response:   chat.Debug.Response,
+	}
+	if err != nil {
+		step.Error = err.Error()
+	}
+	return step
+}
+
+func mcpStep(ev ToolEvent) TurnStep {
+	step := TurnStep{
+		Kind:     "mcp",
+		Title:    "MCP · " + ev.Name,
+		Request:  ev.Request,
+		Response: ev.Response,
+	}
+	if ev.IsError && ev.Result != "" {
+		step.Error = ev.Result
+	}
+	if len(step.Request) == 0 && strings.TrimSpace(ev.Arguments) != "" {
+		if json.Valid([]byte(ev.Arguments)) {
+			step.Request = json.RawMessage(ev.Arguments)
+		}
+	}
+	if len(step.Response) == 0 {
+		raw, err := json.Marshal(map[string]any{"text": ev.Result, "is_error": ev.IsError})
+		if err == nil {
+			step.Response = raw
+		}
+	}
+	return step
 }
 
 func (a *Agent) toolDefs() []deepseek.Tool {
@@ -149,13 +226,19 @@ func (a *Agent) execTool(ctx context.Context, call deepseek.ToolCall) ToolEvent 
 		ev.Result = "Инструменты не подключены."
 		return ev
 	}
-	text, isError, err := a.tools.Call(ctx, call.Name, call.Arguments)
+	ex, err := a.tools.Call(ctx, call.Name, call.Arguments)
+	ev.Request = ex.Request
+	ev.Response = ex.Response
 	if err != nil {
 		ev.IsError = true
-		ev.Result = err.Error()
+		if ex.Text != "" {
+			ev.Result = ex.Text
+		} else {
+			ev.Result = err.Error()
+		}
 		return ev
 	}
-	ev.IsError = isError
-	ev.Result = text
+	ev.IsError = ex.IsError
+	ev.Result = ex.Text
 	return ev
 }

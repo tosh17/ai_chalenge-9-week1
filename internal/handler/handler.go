@@ -54,6 +54,7 @@ type chatResponseBody struct {
 	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
 	Skips           []memory.IllegalShift      `json:"skips,omitempty"`
 	ToolEvents      []agent.ToolEvent          `json:"tool_events,omitempty"`
+	Steps           []agent.TurnStep           `json:"steps,omitempty"`
 	Debug           *deepseek.DebugInfo        `json:"debug,omitempty"`
 }
 
@@ -196,6 +197,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 				"summarize_events": result.SummarizeEvents,
 				"memory":           result.Memory,
 				"route_events":     result.RouteEvents,
+				"steps":            result.Steps,
 			})
 			return
 		}
@@ -212,6 +214,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 			"summarize_events": result.SummarizeEvents,
 			"memory":           result.Memory,
 			"route_events":     result.RouteEvents,
+			"steps":            result.Steps,
 		}
 		if result.Debug != nil {
 			payload["debug"] = result.Debug
@@ -237,6 +240,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		Conflicts:       result.Conflicts,
 		Skips:           result.Skips,
 		ToolEvents:      result.ToolEvents,
+		Steps:           result.Steps,
 		Debug:           result.Debug,
 	}
 	writeJSON(w, http.StatusOK, body)

@@ -135,6 +135,38 @@ func TestMemoryRouterPromptContainsLayersAndUtterance(t *testing.T) {
 	}
 }
 
+func TestReadyFlagLeavesPlanningOnFirstTurn(t *testing.T) {
+	dir := t.TempDir()
+	layers, err := memory.OpenLayers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layers.ApplyWorking(memory.WorkingPatch{Goal: "пикник в Волгограде на выходных"}); err != nil {
+		t.Fatal(err)
+	}
+	a := New("test").WithLayers(layers)
+	ev := MemoryRouteEvent{}
+	a.autoAdvanceTask("пойти на пикник в Волгограде на эти выходные", &ev, true)
+	if got := a.Layers().Working().Task.Stage; got != memory.StageExecution {
+		t.Fatalf("ready first turn should execute, got %s", got)
+	}
+
+	dir2 := t.TempDir()
+	layers2, err := memory.OpenLayers(dir2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layers2.ApplyWorking(memory.WorkingPatch{Goal: "пикник"}); err != nil {
+		t.Fatal(err)
+	}
+	a2 := New("test").WithLayers(layers2)
+	ev2 := MemoryRouteEvent{}
+	a2.autoAdvanceTask("ещё думаю", &ev2, false)
+	if got := a2.Layers().Working().Task.Stage; got != memory.StagePlanning {
+		t.Fatalf("without ready should stay in planning, got %s", got)
+	}
+}
+
 func TestClearLayerIsolation(t *testing.T) {
 	dir := t.TempDir()
 	layers, err := memory.OpenLayers(dir)

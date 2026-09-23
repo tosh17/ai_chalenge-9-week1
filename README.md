@@ -2,14 +2,14 @@
 
 Чат подключает отдельный MCP-сервер и даёт модели инструмент `get_weather`. Температуру агент берёт из [Open-Meteo](https://open-meteo.com/), а не из весов модели.
 
-Сервер на Kotlin лежит рядом: `../mcp/open_meteo`. Протокол — JSON по строке на stdin/stdout.
+Сервер на Kotlin лежит в `mcp/open_meteo`. Протокол — JSON по строке на stdin/stdout.
 
 ## Проверка
 
 1. Соберите jar, если его ещё нет:
 
 ```bash
-cd ../mcp/open_meteo
+cd mcp/open_meteo
 ./gradlew shadowJar
 ```
 
@@ -34,7 +34,7 @@ go run ./cmd/server
 | Переменная | Смысл |
 | --- | --- |
 | `MCP_ENABLED` | `true` по умолчанию |
-| `MCP_JAR` | путь к `open-meteo-0.1.0-all.jar`, иначе `../mcp/open_meteo/build/libs/...` |
+| `MCP_JAR` | путь к `open-meteo-0.1.0-all.jar`, иначе `mcp/open_meteo/build/libs/...` |
 | `MCP_JAVA` | бинарник JDK 17+. Пусто — `JAVA_HOME`, затем JDK из кэша Gradle |
 
 ## Структура

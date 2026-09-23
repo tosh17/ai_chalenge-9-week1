@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,10 +18,12 @@ type Tool struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
-// CallResult — текст ответа tools/call.
+// CallResult — текст ответа tools/call и сырой обмен по stdin/stdout.
 type CallResult struct {
-	Text    string
-	IsError bool
+	Text     string
+	IsError  bool
+	Request  json.RawMessage
+	Response json.RawMessage
 }
 
 // Client говорит с MCP-сервером по stdin/stdout, по одному JSON на строку.
@@ -90,13 +93,17 @@ func (c *Client) Call(ctx context.Context, name string, arguments json.RawMessag
 		arguments = json.RawMessage(`{}`)
 	}
 	var result callResult
-	if err := c.roundtrip(ctx, "tools/call", map[string]any{
+	reqRaw, respRaw, err := c.roundtrip(ctx, "tools/call", map[string]any{
 		"name":      name,
 		"arguments": arguments,
-	}, &result); err != nil {
-		return CallResult{}, err
+	}, &result)
+	out := CallResult{Request: reqRaw, Response: respRaw}
+	if err != nil {
+		return out, err
 	}
-	return CallResult{Text: joinText(result.Content), IsError: result.IsError}, nil
+	out.Text = joinText(result.Content)
+	out.IsError = result.IsError
+	return out, nil
 }
 
 // Close останавливает процесс.
@@ -112,7 +119,7 @@ func (c *Client) Close() error {
 
 func (c *Client) initialize(ctx context.Context) error {
 	var init initializeResult
-	if err := c.roundtrip(ctx, "initialize", map[string]any{
+	if _, _, err := c.roundtrip(ctx, "initialize", map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]string{"name": "week1", "version": "day16"},
@@ -123,7 +130,7 @@ func (c *Client) initialize(ctx context.Context) error {
 		return err
 	}
 	var listed toolsList
-	if err := c.roundtrip(ctx, "tools/list", map[string]any{}, &listed); err != nil {
+	if _, _, err := c.roundtrip(ctx, "tools/list", map[string]any{}, &listed); err != nil {
 		return fmt.Errorf("mcp tools/list: %w", err)
 	}
 	c.mu.Lock()
@@ -138,34 +145,44 @@ func (c *Client) notify(method string, params any) error {
 	return c.write(rpcMessage{JSONRPC: "2.0", Method: method, Params: params})
 }
 
-func (c *Client) roundtrip(ctx context.Context, method string, params any, dest any) error {
+func (c *Client) roundtrip(ctx context.Context, method string, params any, dest any) (reqRaw, respRaw []byte, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	id := c.nextID
 	c.nextID++
-	if err := c.write(rpcMessage{JSONRPC: "2.0", ID: &id, Method: method, Params: params}); err != nil {
-		return err
+	reqRaw, err = json.Marshal(rpcMessage{JSONRPC: "2.0", ID: &id, Method: method, Params: params})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = c.writeRaw(append(append([]byte{}, reqRaw...), '\n')); err != nil {
+		return reqRaw, nil, err
 	}
 
 	line, err := c.readLine(ctx)
 	if err != nil {
-		return err
+		return reqRaw, nil, err
 	}
+	respRaw = bytes.TrimSpace(line)
 	var msg rpcMessage
-	if err := json.Unmarshal(line, &msg); err != nil {
-		return fmt.Errorf("mcp decode: %w", err)
+	if err := json.Unmarshal(respRaw, &msg); err != nil {
+		return reqRaw, respRaw, fmt.Errorf("mcp decode: %w", err)
 	}
 	if msg.Error != nil {
-		return fmt.Errorf("mcp %s: %s", method, msg.Error.Message)
+		return reqRaw, respRaw, fmt.Errorf("mcp %s: %s", method, msg.Error.Message)
 	}
 	if dest == nil || len(msg.Result) == 0 {
-		return nil
+		return reqRaw, respRaw, nil
 	}
 	if err := json.Unmarshal(msg.Result, dest); err != nil {
-		return fmt.Errorf("mcp result: %w", err)
+		return reqRaw, respRaw, fmt.Errorf("mcp result: %w", err)
 	}
-	return nil
+	return reqRaw, respRaw, nil
+}
+
+func (c *Client) writeRaw(body []byte) error {
+	_, err := c.stdin.Write(body)
+	return err
 }
 
 func (c *Client) write(msg rpcMessage) error {
