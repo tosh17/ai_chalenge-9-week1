@@ -53,6 +53,7 @@ type chatResponseBody struct {
 	RouteEvents     []agent.MemoryRouteEvent   `json:"route_events,omitempty"`
 	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
 	Skips           []memory.IllegalShift      `json:"skips,omitempty"`
+	ToolEvents      []agent.ToolEvent          `json:"tool_events,omitempty"`
 	Debug           *deepseek.DebugInfo        `json:"debug,omitempty"`
 }
 
@@ -79,6 +80,18 @@ type branchBody struct {
 	TitleB string `json:"title_b,omitempty"`
 }
 
+func mcpStatus(a *agent.Agent) map[string]any {
+	if a == nil || a.Tools() == nil {
+		return map[string]any{"connected": false}
+	}
+	tools := a.Tools().Tools()
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return map[string]any{"connected": true, "tools": names}
+}
+
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	payload := map[string]any{
 		"status":           "ok",
@@ -89,6 +102,7 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		"session_tokens":   h.agent.SessionTotals(),
 		"strategy":         h.agent.Strategy(),
 		"memory_policy":    h.agent.MemoryPolicy(),
+		"mcp":              mcpStatus(h.agent),
 	}
 	if layers := h.agent.Layers(); layers != nil {
 		snap := layers.Snapshot()
@@ -222,6 +236,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		RouteEvents:     result.RouteEvents,
 		Conflicts:       result.Conflicts,
 		Skips:           result.Skips,
+		ToolEvents:      result.ToolEvents,
 		Debug:           result.Debug,
 	}
 	writeJSON(w, http.StatusOK, body)

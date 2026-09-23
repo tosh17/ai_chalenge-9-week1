@@ -128,9 +128,11 @@ function createMessage(role, content, extraClass = "", meta = {}) {
     ? `<span class="message__time">${escapeHTML(formatDuration(meta.durationMs))}</span>`
     : "";
   const trace = !isUser && !isSystem ? buildTraceHTML(meta) : "";
+  const tools = !isUser && !isSystem ? toolEventsHTML(meta.toolEvents) : "";
   el.innerHTML = `
     <div class="message__avatar">${avatar}</div>
     <div class="message__body">
+      ${tools}
       ${trace}
       <div class="message__bubble">${escapeHTML(content)}</div>
       ${timeLabel}
@@ -139,6 +141,21 @@ function createMessage(role, content, extraClass = "", meta = {}) {
   chatEl.appendChild(el);
   scrollToBottom();
   return el;
+}
+
+function toolEventsHTML(events) {
+  if (!Array.isArray(events) || !events.length) return "";
+  return `<div class="tool-calls">${events.map((ev) => {
+    let args = "";
+    try {
+      const parsed = JSON.parse(ev.arguments || "{}");
+      if (parsed && parsed.city) args = ` · ${parsed.city}`;
+    } catch {
+      args = "";
+    }
+    const mark = ev.is_error ? " · ошибка" : "";
+    return `<p class="tool-call">MCP ${escapeHTML(ev.name || "tool")}${escapeHTML(args)}${escapeHTML(mark)}</p>`;
+  }).join("")}</div>`;
 }
 
 function kindTitle(kind) {
@@ -1342,6 +1359,7 @@ async function sendMessage(text, opts = {}) {
       conflicts: data.conflicts || data.memory?.conflicts,
       skips: data.skips || data.memory?.skips,
       invariants: data.memory?.invariants,
+      toolEvents: data.tool_events,
     });
     renderMemoryMeta(data.memory);
     history.push({ role: "user", content: text });

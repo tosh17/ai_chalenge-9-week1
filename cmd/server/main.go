@@ -3,13 +3,20 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
 
 	"github.com/tosh17/deepseek-service/internal/agent"
 	"github.com/tosh17/deepseek-service/internal/config"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 	"github.com/tosh17/deepseek-service/internal/handler"
+	"github.com/tosh17/deepseek-service/internal/mcp"
 	"github.com/tosh17/deepseek-service/internal/memory"
 )
 
@@ -36,7 +43,7 @@ func main() {
 		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day15-lifecycle-agent").
+	chatAgent := agent.New("day16-mcp-agent").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithInvariants(invariants).
@@ -57,6 +64,16 @@ func main() {
 		}).
 		WithCompression(agent.CompressionConfig{Enabled: false}).
 		WithBackendLimit(agent.ProviderDeepSeek, "DeepSeek", cfg.DeepSeekModel, deepseekClient, cfg.ContextTokenLimit)
+
+	var mcpClient *mcp.Client
+	if cfg.MCPEnabled {
+		client, err := attachMCP(chatAgent, cfg)
+		if err != nil {
+			log.Printf("mcp off: %v", err)
+		} else {
+			mcpClient = client
+		}
+	}
 
 	if cfg.LocalEnabled {
 		localURL := config.NormalizeChatURL(cfg.LocalAPIURL)
@@ -80,7 +97,50 @@ func main() {
 		addr, chatAgent.Name(), chatAgent.DefaultProvider(),
 		mp.STMWindowN, mp.InjectSTM, mp.InjectWM, mp.InjectLTM, mp.InjectProfile, mp.InjectInvariants, st.Kind,
 	)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("server: %v", err)
+	srv := &http.Server{Addr: addr, Handler: mux}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if mcpClient != nil {
+				_ = mcpClient.Close()
+			}
+			log.Fatalf("server: %v", err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutCtx)
+	if mcpClient != nil {
+		_ = mcpClient.Close()
 	}
+}
+
+func attachMCP(chatAgent *agent.Agent, cfg *config.Config) (*mcp.Client, error) {
+	jar := cfg.MCPJar
+	if jar == "" {
+		jar = filepath.Join("..", "mcp", "open_meteo", "build", "libs", "open-meteo-0.1.0-all.jar")
+	}
+	if _, err := os.Stat(jar); err != nil {
+		return nil, err
+	}
+	javaBin, err := mcp.FindJava(cfg.MCPJava)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client, err := mcp.Start(ctx, javaBin, "-Dkotlin-logging.logStartupMessage=false", "-jar", jar)
+	if err != nil {
+		return nil, err
+	}
+	chatAgent.WithTools(agent.MCPTools{Client: client})
+	names := make([]string, 0)
+	for _, tool := range client.Tools() {
+		names = append(names, tool.Name)
+	}
+	log.Printf("mcp connected: %s tools=%v", jar, names)
+	return client, nil
 }

@@ -59,6 +59,7 @@ type Result struct {
 	SummarizeEvents []SummarizeEvent           `json:"summarize_events,omitempty"`
 	Strategy        *StrategyInfo              `json:"strategy,omitempty"`
 	FactEvents      []FactUpdateEvent          `json:"fact_events,omitempty"`
+	ToolEvents      []ToolEvent                `json:"tool_events,omitempty"`
 	Memory          *MemoryInfo                `json:"memory,omitempty"`
 	RouteEvents     []MemoryRouteEvent         `json:"route_events,omitempty"`
 	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
@@ -103,6 +104,7 @@ type Agent struct {
 	contextLimit      int
 	forceContextLimit bool
 	pricing           tokens.Pricing
+	tools             ToolSource
 
 	mu      sync.Mutex
 	session tokens.SessionTotals
@@ -489,7 +491,7 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 	}
 
 	start := time.Now()
-	chat, err := b.llm.Chat(ctx, messages)
+	chat, toolEvents, err := a.completeWithTools(ctx, b.llm, messages)
 	duration := time.Since(start).Milliseconds()
 	if err != nil {
 		debug := chat.Debug
@@ -503,6 +505,7 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 			SummarizeEvents: sumEvents,
 			Strategy:        &stratInfo,
 			FactEvents:      factEvents,
+			ToolEvents:      toolEvents,
 			Debug:           &debug,
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
@@ -569,6 +572,7 @@ func (a *Agent) Handle(ctx context.Context, req Request) (Result, error) {
 		SummarizeEvents: sumEvents,
 		Strategy:        &stratInfo,
 		FactEvents:      factEvents,
+		ToolEvents:      toolEvents,
 		Debug:           &debug,
 	}, nil
 }

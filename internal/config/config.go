@@ -39,6 +39,10 @@ type Config struct {
 	InjectLTM        bool
 	InjectProfile    bool
 	InjectInvariants bool
+
+	MCPEnabled bool
+	MCPJar     string
+	MCPJava    string
 }
 
 func Load() (*Config, error) {
@@ -67,6 +71,9 @@ func Load() (*Config, error) {
 		InjectLTM:         getEnvBool("MEMORY_INJECT_LTM", true),
 		InjectProfile:     getEnvBool("MEMORY_INJECT_PROFILE", true),
 		InjectInvariants:  getEnvBool("MEMORY_INJECT_INVARIANTS", true),
+		MCPEnabled:        getEnvBool("MCP_ENABLED", true),
+		MCPJar:            getEnv("MCP_JAR", ""),
+		MCPJava:           getEnv("MCP_JAVA", ""),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")

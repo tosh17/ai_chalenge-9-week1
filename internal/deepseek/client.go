@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,14 +23,32 @@ type Client struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	Name       string     `json:"name,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// ToolCall — вызов функции, который модель просит выполнить.
+type ToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// Tool — описание функции для запроса к модели.
+type Tool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
+	Model    string     `json:"model"`
+	Messages []Message  `json:"messages"`
+	Stream   bool       `json:"stream"`
+	Tools    []wireTool `json:"tools,omitempty"`
 }
 
 type chatResponse struct {
@@ -60,9 +79,10 @@ type DebugInfo struct {
 }
 
 type ChatResult struct {
-	Reply string
-	Usage *Usage
-	Debug DebugInfo
+	Reply     string
+	ToolCalls []ToolCall
+	Usage     *Usage
+	Debug     DebugInfo
 }
 
 func NewClient(apiKey, model, baseURL string) *Client {
@@ -91,12 +111,18 @@ func newHTTPClient() *http.Client {
 }
 
 func (c *Client) Chat(ctx context.Context, messages []Message) (ChatResult, error) {
+	return c.ChatTools(ctx, messages, nil)
+}
+
+// ChatTools отправляет запрос с описаниями инструментов. Пустой tools равен обычному Chat.
+func (c *Client) ChatTools(ctx context.Context, messages []Message, tools []Tool) (ChatResult, error) {
 	start := time.Now()
 
 	body, err := json.Marshal(chatRequest{
 		Model:    c.model,
 		Messages: messages,
 		Stream:   false,
+		Tools:    wireTools(tools),
 	})
 	if err != nil {
 		return ChatResult{}, fmt.Errorf("marshal request: %w", err)
@@ -148,11 +174,128 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (ChatResult, erro
 		return ChatResult{Debug: debug}, fmt.Errorf("empty response from deepseek")
 	}
 
+	msg := result.Choices[0].Message
 	return ChatResult{
-		Reply: result.Choices[0].Message.Content,
-		Usage: result.Usage,
-		Debug: debug,
+		Reply:     msg.Content,
+		ToolCalls: msg.ToolCalls,
+		Usage:     result.Usage,
+		Debug:     debug,
 	}, nil
+}
+
+type wireTool struct {
+	Type     string    `json:"type"`
+	Function wireFnDef `json:"function"`
+}
+
+type wireFnDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+type wireFnCall struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+type wireToolCall struct {
+	ID       string     `json:"id"`
+	Type     string     `json:"type,omitempty"`
+	Function wireFnCall `json:"function"`
+}
+
+type messageWire struct {
+	Role       string         `json:"role"`
+	Content    string         `json:"content,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
+}
+
+func (m Message) MarshalJSON() ([]byte, error) {
+	wire := messageWire{
+		Role:       m.Role,
+		Name:       m.Name,
+		ToolCallID: m.ToolCallID,
+	}
+	if m.Content != "" || len(m.ToolCalls) == 0 {
+		wire.Content = m.Content
+	}
+	for _, call := range m.ToolCalls {
+		args := strings.TrimSpace(call.Arguments)
+		if args == "" {
+			args = "{}"
+		}
+		wire.ToolCalls = append(wire.ToolCalls, wireToolCall{
+			ID:   call.ID,
+			Type: "function",
+			Function: wireFnCall{
+				Name:      call.Name,
+				Arguments: json.RawMessage(strconv.Quote(args)),
+			},
+		})
+	}
+	return json.Marshal(wire)
+}
+
+func (m *Message) UnmarshalJSON(data []byte) error {
+	var wire messageWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	m.Role = wire.Role
+	m.Content = wire.Content
+	m.Name = wire.Name
+	m.ToolCallID = wire.ToolCallID
+	m.ToolCalls = nil
+	for _, call := range wire.ToolCalls {
+		m.ToolCalls = append(m.ToolCalls, ToolCall{
+			ID:        call.ID,
+			Name:      call.Function.Name,
+			Arguments: stringifyArgs(call.Function.Arguments),
+		})
+	}
+	return nil
+}
+
+func stringifyArgs(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return "{}"
+	}
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			if strings.TrimSpace(s) == "" {
+				return "{}"
+			}
+			return s
+		}
+	}
+	return string(raw)
+}
+
+func wireTools(tools []Tool) []wireTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]wireTool, 0, len(tools))
+	for _, tool := range tools {
+		params := tool.Parameters
+		if len(bytes.TrimSpace(params)) == 0 {
+			params = json.RawMessage(`{"type":"object","properties":{}}`)
+		}
+		out = append(out, wireTool{
+			Type: "function",
+			Function: wireFnDef{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters:  params,
+			},
+		})
+	}
+	return out
 }
 
 func wrapNet(err error) error {

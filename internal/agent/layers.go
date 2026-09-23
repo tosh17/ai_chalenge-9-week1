@@ -208,7 +208,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 	}
 
 	start := time.Now()
-	chat, err := b.llm.Chat(ctx, messages)
+	chat, toolEvents, err := a.completeWithTools(ctx, b.llm, messages)
 	duration := time.Since(start).Milliseconds()
 	if err != nil {
 		debug := chat.Debug
@@ -222,6 +222,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 			RouteEvents: []MemoryRouteEvent{route},
 			Conflicts:   conflicts,
 			Skips:       skips,
+			ToolEvents:  toolEvents,
 			Debug:       &debug,
 		}, fmt.Errorf("agent %q [%s]: %w", a.name, providerID, err)
 	}
@@ -277,6 +278,7 @@ func (a *Agent) handleWithLayers(ctx context.Context, req Request, providerID st
 		RouteEvents: []MemoryRouteEvent{route},
 		Conflicts:   conflicts,
 		Skips:       skips,
+		ToolEvents:  toolEvents,
 		Debug:       &debug,
 	}, nil
 }

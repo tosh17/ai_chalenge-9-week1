@@ -1763,6 +1763,16 @@ a.btn.nav__btn {
   background: #fff6f5;
 }
 
+.tool-calls {
+  margin: 0 0 6px;
+}
+
+.tool-call {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .trace-raw summary {
   cursor: pointer;
   color: var(--text-muted);
