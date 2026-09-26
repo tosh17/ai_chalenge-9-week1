@@ -118,6 +118,37 @@ func TestPromptUsesSeparateLayers(t *testing.T) {
 	}
 }
 
+func TestSlimPromptKeepsProfileOnly(t *testing.T) {
+	dir := t.TempDir()
+	layers, err := memory.OpenLayers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = layers.ApplyWorking(memory.WorkingPatch{Goal: "пикник", Status: memory.WorkingActive})
+	book, err := memory.OpenProfileBook(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New("test").WithLayers(layers).WithProfiles(book)
+	if a.MemoryPolicy().InjectSTM || a.MemoryPolicy().InjectWM || a.MemoryPolicy().InjectLTM || a.MemoryPolicy().InjectInvariants {
+		t.Fatalf("default policy should not inject layers: %+v", a.MemoryPolicy())
+	}
+	if !a.MemoryPolicy().InjectProfile {
+		t.Fatal("profile should stay in the prompt")
+	}
+	msgs, _ := a.buildMessagesLayers("какая погода", a.MemoryPolicy())
+	blob := ""
+	for _, m := range msgs {
+		blob += m.Content + "\n"
+	}
+	if strings.Contains(blob, "ДОЛГОВРЕМЕННАЯ") || strings.Contains(blob, "РАБОЧАЯ") || strings.Contains(blob, "пикник") {
+		t.Fatalf("layers leaked into slim prompt:\n%s", blob)
+	}
+	if !strings.Contains(blob, "ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ") {
+		t.Fatalf("profile missing:\n%s", blob)
+	}
+}
+
 func TestMemoryRouterPromptContainsLayersAndUtterance(t *testing.T) {
 	p := buildMemoryRouterPrompt(
 		"Я Антон, хочу сделать умный дом",

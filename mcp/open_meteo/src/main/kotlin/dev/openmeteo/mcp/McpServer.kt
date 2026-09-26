@@ -38,6 +38,7 @@ fun runMcpServer() {
             ),
         )
         server.registerWeatherTool(client)
+        server.registerObserveTool(client)
 
         val transport = StdioServerTransport(
             input = System.`in`.asInput(),
@@ -56,9 +57,8 @@ fun runMcpServer() {
 private fun Server.registerWeatherTool(client: OpenMeteoClient) {
     addTool(
         name = "get_weather",
-        description = "Текущая погода и короткий прогноз по названию города через Open-Meteo. " +
-            "Current weather and daily forecast for a city. Учебное некоммерческое использование. " +
-            "В ответе уже есть ссылка на источник.",
+        description = "Текущая погода, восход, закат, фаза луны и короткий прогноз по городу через Open-Meteo. " +
+            "Учебное некоммерческое использование. В ответе уже есть ссылка на источник.",
         inputSchema = ToolSchema(
             properties = buildJsonObject {
                 putJsonObject("city") {
@@ -117,6 +117,35 @@ fun parseDays(raw: JsonElement?): DaysParse {
 private fun JsonElement?.asText(): String? {
     val primitive = this as? JsonPrimitive ?: return null
     return primitive.contentOrNull
+}
+
+private fun Server.registerObserveTool(client: OpenMeteoClient) {
+    addTool(
+        name = "observe_city",
+        description = "Структурированные наблюдения города: температура, погода, восход, закат и фаза луны. Ответ — один JSON-объект.",
+        inputSchema = ToolSchema(
+            properties = buildJsonObject {
+                putJsonObject("city") {
+                    put("type", "string")
+                    put("description", "Название города, например Волгоград")
+                }
+            },
+            required = listOf("city"),
+        ),
+        toolAnnotations = ToolAnnotations(readOnlyHint = true, openWorldHint = true),
+    ) { request ->
+        val city = request.arguments?.get("city").asText()?.trim().orEmpty()
+        if (city.isEmpty()) {
+            return@addTool errorResult("Нужен параметр city — название города.")
+        }
+        try {
+            CallToolResult(content = listOf(TextContent(client.observe(city))))
+        } catch (e: OpenMeteoException) {
+            errorResult(e.message ?: "Open-Meteo недоступен")
+        } catch (e: Exception) {
+            errorResult("Не удалось снять наблюдения: ${e.message ?: e::class.simpleName}")
+        }
+    }
 }
 
 private fun errorResult(message: String) = CallToolResult(

@@ -85,7 +85,7 @@ let debugEnabled = localStorage.getItem(DEBUG_STORAGE_KEY) === "true";
 let debugEntryCount = 0;
 /** @type {{id: string, title: string, model: string, context_limit?: number}[]} */
 let providers = [];
-let currentPolicy = { stm_window_n: 8, inject_stm: true, inject_wm: true, inject_ltm: true, inject_profile: true, inject_invariants: true };
+let currentPolicy = { stm_window_n: 8, inject_stm: false, inject_wm: false, inject_ltm: false, inject_profile: true, inject_invariants: false };
 /** @type {{id: string, title?: string, name?: string, role?: string, language?: string, style?: string, format?: string, constraints?: string[]}[]} */
 let profileList = [];
 let activeProfileID = "";

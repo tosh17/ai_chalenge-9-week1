@@ -130,6 +130,12 @@ func New(name string) *Agent {
 	}
 }
 
+// WithSystemPrompt заменяет системную инструкцию чата.
+func (a *Agent) WithSystemPrompt(text string) *Agent {
+	a.systemPrompt = text
+	return a
+}
+
 // WithBackend регистрирует LLM-бэкенд (deepseek, local, …).
 func (a *Agent) WithBackend(id, title, model string, llm LLM) *Agent {
 	return a.WithBackendLimit(id, title, model, llm, 0)

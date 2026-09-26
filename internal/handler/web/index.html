@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent</title>
-  <link rel="stylesheet" href="/static/style.css?v=day16-newchat2">
+  <link rel="stylesheet" href="/static/style.css?v=day18-observe-split">
 </head>
 <body>
   <div class="layout" id="layout">
@@ -34,7 +34,7 @@
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
           <h2>Ассистент</h2>
-          <p>Пишите задачу. Этапы идут по порядку. Погоду агент берёт через MCP Open-Meteo, а не из головы.</p>
+          <p>Пишите задачу. Погоду агент берёт через MCP. Замеры по Волгограду пишет отдельный процесс. В чате можно спросить, сколько циклов сбора прошло и как менялась температура за период.</p>
         </div>
       </main>
 
@@ -132,7 +132,7 @@
       <section class="nav__block invariant-form">
         <h3>Инварианты</h3>
         <p class="nav__hint" style="display:block">Жёсткие рамки вне диалога. Ассистент откажется их нарушать.</p>
-        <label class="nav__check"><input type="checkbox" id="injectInvariants" checked> подмешивать в запрос</label>
+        <label class="nav__check"><input type="checkbox" id="injectInvariants"> подмешивать в запрос</label>
         <ul id="invariantList" class="invariant-list"></ul>
         <label class="profile-field">
           <span>Вид</span>
@@ -161,9 +161,9 @@
       <section class="nav__block">
         <h3>Память в запросе</h3>
         <div class="nav__checks">
-          <label class="nav__check"><input type="checkbox" id="injectSTM" checked> STM</label>
-          <label class="nav__check"><input type="checkbox" id="injectWM" checked> WM</label>
-          <label class="nav__check"><input type="checkbox" id="injectLTM" checked> LTM</label>
+          <label class="nav__check"><input type="checkbox" id="injectSTM"> STM</label>
+          <label class="nav__check"><input type="checkbox" id="injectWM"> WM</label>
+          <label class="nav__check"><input type="checkbox" id="injectLTM"> LTM</label>
         </div>
         <label class="nav__field">
           Окно STM
@@ -236,6 +236,6 @@
     </aside>
   </div>
 
-  <script src="/static/chat.js?v=day16-newchat2"></script>
+  <script src="/static/chat.js?v=day18-observe-split"></script>
 </body>
 </html>

@@ -38,11 +38,11 @@ type MemoryPolicy struct {
 func defaultMemoryPolicy() MemoryPolicy {
 	return MemoryPolicy{
 		STMWindowN:       8,
-		InjectSTM:        true,
-		InjectWM:         true,
-		InjectLTM:        true,
+		InjectSTM:        false,
+		InjectWM:         false,
+		InjectLTM:        false,
 		InjectProfile:    true,
-		InjectInvariants: true,
+		InjectInvariants: false,
 	}
 }
 
@@ -51,6 +51,10 @@ func normalizeMemoryPolicy(p MemoryPolicy) MemoryPolicy {
 		p.STMWindowN = 8
 	}
 	return p
+}
+
+func policyInjectsLayers(p MemoryPolicy) bool {
+	return p.InjectSTM || p.InjectWM || p.InjectLTM || p.InjectInvariants
 }
 
 // MemoryInfo — что ушло в промпт и состояние слоёв после хода.
@@ -346,10 +350,15 @@ func (a *Agent) buildMessagesLayers(userMsg string, policy MemoryPolicy) ([]deep
 	info := a.memorySnapshot(policy)
 	out := make([]deepseek.Message, 0, 8)
 	system := a.systemPrompt
+	if policyInjectsLayers(policy) {
+		if system == "" {
+			system = memorySystemPrompt
+		} else {
+			system = system + "\n\n" + memorySystemPrompt
+		}
+	}
 	if system == "" {
-		system = memorySystemPrompt
-	} else {
-		system = system + "\n\n" + memorySystemPrompt
+		system = "Ты полезный ассистент. Отвечай кратко и по делу на языке пользователя."
 	}
 	out = append(out, deepseek.Message{Role: "system", Content: system})
 
@@ -503,6 +512,12 @@ func (a *Agent) routeToLayers(ctx context.Context, providerID, userMsg string) (
 			return ev, err
 		}
 		a.autoAdvanceTask(userMsg, &ev, false)
+		return ev, nil
+	}
+
+	if !policyInjectsLayers(a.memoryPolicy) {
+		ev.Source = "off"
+		ev.Reasons = append(ev.Reasons, "слои выключены: маршрутизатор не вызывается")
 		return ev, nil
 	}
 

@@ -18,6 +18,7 @@ import (
 	"github.com/tosh17/deepseek-service/internal/handler"
 	"github.com/tosh17/deepseek-service/internal/mcp"
 	"github.com/tosh17/deepseek-service/internal/memory"
+	"github.com/tosh17/deepseek-service/internal/observe"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func main() {
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
 	chatAgent := agent.New("day16-mcp-agent").
+		WithSystemPrompt("Ты аналитик архива наблюдений. Отдельный сборщик пишет замеры по Волгограду. На вопрос о циклах и динамике вызови observation_report только с городом: в ответе весь архив и фактическое время замеров. Если пользователь назвал период, передай from и to сам. Инструмент не делает выводов. Сам разбери динамику по времени суток, солнцу, погоде, влажности, ветру и луне и закончи заключением. Числа бери только из ответа инструмента. Текущую погоду вне архива бери через get_weather.").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithInvariants(invariants).
@@ -67,7 +69,7 @@ func main() {
 
 	var mcpClient *mcp.Client
 	if cfg.MCPEnabled {
-		client, err := attachMCP(chatAgent, cfg)
+		client, err := attachMCP(chatAgent, cfg, observe.Open(cfg.ObserveDir))
 		if err != nil {
 			log.Printf("mcp off: %v", err)
 		} else {
@@ -118,7 +120,7 @@ func main() {
 	}
 }
 
-func attachMCP(chatAgent *agent.Agent, cfg *config.Config) (*mcp.Client, error) {
+func attachMCP(chatAgent *agent.Agent, cfg *config.Config, store *observe.Store) (*mcp.Client, error) {
 	jar := cfg.MCPJar
 	if jar == "" {
 		jar = filepath.Join("mcp", "open_meteo", "build", "libs", "open-meteo-0.1.0-all.jar")
@@ -136,7 +138,10 @@ func attachMCP(chatAgent *agent.Agent, cfg *config.Config) (*mcp.Client, error) 
 	if err != nil {
 		return nil, err
 	}
-	chatAgent.WithTools(agent.MCPTools{Client: client})
+	chatAgent.WithTools(agent.ToolSet{
+		agent.MCPTools{Client: client},
+		agent.ObservationTools{Store: store},
+	})
 	names := make([]string, 0)
 	for _, tool := range client.Tools() {
 		names = append(names, tool.Name)

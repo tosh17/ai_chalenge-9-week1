@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -43,6 +44,11 @@ type Config struct {
 	MCPEnabled bool
 	MCPJar     string
 	MCPJava    string
+
+	ObserveEnabled bool
+	ObserveCity    string
+	ObserveEvery   time.Duration
+	ObserveDir     string
 }
 
 func Load() (*Config, error) {
@@ -66,14 +72,18 @@ func Load() (*Config, error) {
 		BranchWindowN:     getEnvInt("BRANCH_WINDOW_N", 0),
 		MemoryDir:         getEnv("MEMORY_DIR", "data/memory"),
 		STMWindowN:        getEnvInt("STM_WINDOW_N", 8),
-		InjectSTM:         getEnvBool("MEMORY_INJECT_STM", true),
-		InjectWM:          getEnvBool("MEMORY_INJECT_WM", true),
-		InjectLTM:         getEnvBool("MEMORY_INJECT_LTM", true),
+		InjectSTM:         getEnvBool("MEMORY_INJECT_STM", false),
+		InjectWM:          getEnvBool("MEMORY_INJECT_WM", false),
+		InjectLTM:         getEnvBool("MEMORY_INJECT_LTM", false),
 		InjectProfile:     getEnvBool("MEMORY_INJECT_PROFILE", true),
-		InjectInvariants:  getEnvBool("MEMORY_INJECT_INVARIANTS", true),
+		InjectInvariants:  getEnvBool("MEMORY_INJECT_INVARIANTS", false),
 		MCPEnabled:        getEnvBool("MCP_ENABLED", true),
 		MCPJar:            getEnv("MCP_JAR", ""),
 		MCPJava:           getEnv("MCP_JAVA", ""),
+		ObserveEnabled:    getEnvBool("OBSERVE_ENABLED", true),
+		ObserveCity:       getEnv("OBSERVE_CITY", "Волгоград"),
+		ObserveEvery:      getEnvDuration("OBSERVE_EVERY", 15*time.Minute),
+		ObserveDir:        getEnv("OBSERVE_DIR", "data/observations"),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
@@ -104,6 +114,18 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 func getEnvBool(key string, fallback bool) bool {

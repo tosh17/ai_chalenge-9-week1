@@ -29,6 +29,12 @@ class OpenMeteoClient(
         return formatReport(place, forecast)
     }
 
+    suspend fun observe(city: String): String {
+        val place = geocode(city)
+        val forecast = forecast(place, 1)
+        return observationJson(place, forecast)
+    }
+
     private suspend fun geocode(city: String): Place {
         val response = http.get("https://geocoding-api.open-meteo.com/v1/search") {
             parameter("name", city)
@@ -60,7 +66,7 @@ class OpenMeteoClient(
             )
             parameter(
                 "daily",
-                "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum",
+                "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset",
             )
             parameter("forecast_days", days)
             parameter("timezone", place.timezone ?: "auto")
@@ -119,10 +125,15 @@ private data class ForecastResponse(
                 temperatureMin = daily.temperatureMin.getOrElse(i) { Double.NaN },
                 temperatureMax = daily.temperatureMax.getOrElse(i) { Double.NaN },
                 precipitationMm = daily.precipitationSum.getOrNull(i),
+                sunrise = daily.sunrise.getOrNull(i),
+                sunset = daily.sunset.getOrNull(i),
             )
         }
+        val moon = moonAt(current.time, timezone)
         return Forecast(
             timezone = timezone,
+            moonPhase = moon.fraction,
+            moonName = moon.name,
             current = CurrentWeather(
                 time = current.time,
                 temperature = current.temperature,
@@ -153,4 +164,6 @@ private data class DailyDto(
     @SerialName("temperature_2m_max") val temperatureMax: List<Double> = emptyList(),
     @SerialName("temperature_2m_min") val temperatureMin: List<Double> = emptyList(),
     @SerialName("precipitation_sum") val precipitationSum: List<Double> = emptyList(),
+    val sunrise: List<String> = emptyList(),
+    val sunset: List<String> = emptyList(),
 )

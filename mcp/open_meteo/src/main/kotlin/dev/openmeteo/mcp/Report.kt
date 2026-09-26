@@ -26,12 +26,16 @@ data class DayForecast(
     val temperatureMin: Double,
     val temperatureMax: Double,
     val precipitationMm: Double?,
+    val sunrise: String? = null,
+    val sunset: String? = null,
 )
 
 data class Forecast(
     val timezone: String,
     val current: CurrentWeather,
     val days: List<DayForecast>,
+    val moonPhase: Double? = null,
+    val moonName: String? = null,
 )
 
 private val ru = Locale("ru")
@@ -72,6 +76,21 @@ fun formatReport(place: Place, forecast: Forecast): String = buildString {
     append(placeLabel(place))
     append('\n')
     append(currentLine(forecast.current))
+    forecast.days.firstOrNull()?.let { today ->
+        if (!today.sunrise.isNullOrBlank() || !today.sunset.isNullOrBlank()) {
+            append("\nСолнце: восход ")
+            append(today.sunrise ?: "—")
+            append(", закат ")
+            append(today.sunset ?: "—")
+        }
+    }
+    if (forecast.moonName != null && forecast.moonPhase != null) {
+        append("\nЛуна: ")
+        append(forecast.moonName)
+        append(" (фаза ")
+        append(String.format(ru, "%.2f", forecast.moonPhase))
+        append(")")
+    }
     if (forecast.days.isNotEmpty()) {
         append("\nПрогноз:\n")
         forecast.days.forEach { day ->

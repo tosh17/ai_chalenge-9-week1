@@ -12,7 +12,7 @@ import (
 
 const maxToolRounds = 3
 
-const mcpToolHint = `ИНСТРУМЕНТЫ MCP: если пользователь спрашивает текущую погоду или прогноз, вызови get_weather и ответь по его результату. Температуру и осадки не выдумывай. Для остальных вопросов инструмент не вызывай.`
+const mcpToolHint = `ИНСТРУМЕНТЫ: текущая погода — get_weather. Ряд замеров сборщика — observation_report. Без периода передавай только город: придёт весь архив и реальное время первого и последнего замера. Если пользователь назвал период, передай from и to сам. Это факты без выводов: динамику и заключение пишешь сам. Числа не выдумывай. Запись замеров делает отдельный процесс, из чата её не запускай.`
 
 // ToolEvent — один вызов MCP за ход диалога.
 type ToolEvent struct {
@@ -97,6 +97,34 @@ func (m MCPTools) Call(ctx context.Context, name, arguments string) (ToolExchang
 		return ex, err
 	}
 	return ex, nil
+}
+
+// ToolSet склеивает несколько источников. Call идёт в тот, где есть имя.
+type ToolSet []ToolSource
+
+func (s ToolSet) Tools() []deepseek.Tool {
+	var out []deepseek.Tool
+	for _, src := range s {
+		if src == nil {
+			continue
+		}
+		out = append(out, src.Tools()...)
+	}
+	return out
+}
+
+func (s ToolSet) Call(ctx context.Context, name, arguments string) (ToolExchange, error) {
+	for _, src := range s {
+		if src == nil {
+			continue
+		}
+		for _, tool := range src.Tools() {
+			if tool.Name == name {
+				return src.Call(ctx, name, arguments)
+			}
+		}
+	}
+	return ToolExchange{IsError: true}, fmt.Errorf("unknown tool %q", name)
 }
 
 // WithTools подключает MCP. Клоны агента инструменты не наследуют.
