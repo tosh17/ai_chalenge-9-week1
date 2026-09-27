@@ -53,7 +53,10 @@ func (s *stubTools) Tools() []deepseek.Tool {
 }
 
 func (s *stubTools) Call(ctx context.Context, name, arguments string) (ToolExchange, error) {
-	s.called = name + " " + arguments
+	s.called += name + " " + arguments + "\n"
+	if name == "draw_flow" {
+		return ToolExchange{Text: `{"image_url":"/media/flow.png"}`}, nil
+	}
 	return ToolExchange{
 		Text:    "Москва 17°C",
 		Request: []byte(`{"jsonrpc":"2.0","method":"tools/call"}`),
@@ -70,10 +73,10 @@ func TestCompleteWithTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chat.Reply != "В Москве 17°C, пасмурно." {
+	if !strings.Contains(chat.Reply, "В Москве 17°C, пасмурно.") || !strings.Contains(chat.Reply, "/media/flow.png") {
 		t.Fatalf("reply: %q", chat.Reply)
 	}
-	if len(events) != 1 || events[0].Name != "get_weather" || events[0].IsError {
+	if len(events) < 2 || events[0].Name != "get_weather" || events[0].IsError || events[len(events)-1].Name != "draw_flow" {
 		t.Fatalf("events: %+v", events)
 	}
 	if !strings.Contains(stub.called, "Москва") {
@@ -82,7 +85,7 @@ func TestCompleteWithTools(t *testing.T) {
 	if llm.calls != 2 {
 		t.Fatalf("model calls: %d", llm.calls)
 	}
-	if len(steps) != 3 || steps[0].Kind != "llm" || steps[1].Kind != "mcp" || steps[2].Kind != "llm" {
+	if len(steps) != 4 || steps[0].Kind != "llm" || steps[1].Kind != "mcp" || steps[2].Kind != "llm" || steps[3].Kind != "mcp" {
 		t.Fatalf("steps: %+v", steps)
 	}
 }
@@ -125,6 +128,8 @@ func (chainTools) Call(ctx context.Context, name, arguments string) (ToolExchang
 		return ToolExchange{Text: `{"summary_path":"sum.json","files":3}`}, nil
 	case "chart_media":
 		return ToolExchange{Text: `{"image_url":"/media/chart.png"}`}, nil
+	case "draw_flow":
+		return ToolExchange{Text: `{"image_url":"/media/flow.png"}`}, nil
 	default:
 		return ToolExchange{Text: "unknown", IsError: true}, nil
 	}
@@ -139,7 +144,7 @@ func TestMediaChainContinuesToChart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 3 || events[2].Name != "chart_media" {
+	if len(events) != 4 || events[2].Name != "chart_media" || events[3].Name != "draw_flow" {
 		t.Fatalf("events: %+v", events)
 	}
 	if !strings.Contains(chat.Reply, "/media/chart.png") || !strings.Contains(chat.Reply, "3 файла") {

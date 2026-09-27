@@ -78,7 +78,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 func (h *Handler) MediaFile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" || name != filepath.Base(name) || strings.Contains(name, "..") || !strings.HasSuffix(strings.ToLower(name), ".png") {
+	kind := mediaContentType(name)
+	if name == "" || name != filepath.Base(name) || strings.Contains(name, "..") || kind == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -87,8 +88,23 @@ func (h *Handler) MediaFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Type", kind)
 	http.ServeFile(w, r, path)
+}
+
+func mediaContentType(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return ""
+	}
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {

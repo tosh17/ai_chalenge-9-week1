@@ -129,11 +129,13 @@ function createMessage(role, content, extraClass = "", meta = {}) {
     : "";
   const trace = !isUser && !isSystem ? buildTraceHTML(meta) : "";
   const steps = !isUser && !isSystem ? turnStepsHTML(meta.steps) : "";
+  const bubbleHTML = renderReply(content);
+  const bubble = bubbleHTML ? `<div class="message__bubble">${bubbleHTML}</div>` : "";
   el.innerHTML = `
     <div class="message__avatar">${avatar}</div>
     <div class="message__body">
       ${trace}
-      <div class="message__bubble">${escapeHTML(content)}</div>
+      ${bubble}
       ${chartHTML(content, meta.toolEvents)}
       ${steps}
       ${timeLabel}
@@ -144,20 +146,42 @@ function createMessage(role, content, extraClass = "", meta = {}) {
   return el;
 }
 
+const mediaRE = /\/media\/[A-Za-z0-9._-]+\.(?:png|jpe?g|gif|webp)/gi;
+
+function renderReply(content) {
+  const imgs = [];
+  const marked = String(content || "").replace(
+    /<img\b[^>]*?\bsrc\s*=\s*["'](\/media\/[A-Za-z0-9._-]+\.(?:png|jpe?g|gif|webp))["'][^>]*>|(\/media\/[A-Za-z0-9._-]+\.(?:png|jpe?g|gif|webp))/gi,
+    (_, tagSrc, bareSrc) => {
+      imgs.push(tagSrc || bareSrc);
+      return `\u0000IMG${imgs.length - 1}\u0000`;
+    },
+  );
+  const html = escapeHTML(marked).replace(/\u0000IMG(\d+)\u0000/g, (_, n) => {
+    const src = imgs[Number(n)];
+    return `<img src="${escapeHTML(src)}" alt="${escapeHTML(imageAlt(src))}">`;
+  });
+  return html.trim();
+}
+
 function chartHTML(content, toolEvents) {
+  const inline = new Set(String(content || "").match(mediaRE) || []);
   const urls = [];
-  const push = (url) => {
-    if (url && urls.indexOf(url) === -1) urls.push(url);
-  };
-  const re = /\/media\/[A-Za-z0-9._-]+\.png/g;
-  const fromText = String(content || "").match(re) || [];
-  fromText.forEach(push);
   for (const ev of toolEvents || []) {
-    const fromTool = String(ev.result || "").match(re) || [];
-    fromTool.forEach(push);
+    const fromTool = String(ev.result || "").match(mediaRE) || [];
+    fromTool.forEach((url) => {
+      if (inline.has(url) || urls.indexOf(url) !== -1) return;
+      if (!/\/media\/(?:flow-|chart)/.test(url)) return;
+      urls.push(url);
+    });
   }
   if (!urls.length) return "";
-  return `<div class="message__chart">${urls.map((url) => `<img src="${escapeHTML(url)}" alt="График медиафайлов">`).join("")}</div>`;
+  return `<div class="message__chart">${urls.map((url) => `<img src="${escapeHTML(url)}" alt="${escapeHTML(imageAlt(url))}">`).join("")}</div>`;
+}
+
+function imageAlt(url) {
+  if (/\/media\/(?:flow-|chart)/.test(url)) return "Схема хода";
+  return "Картинка по теме";
 }
 
 function prettyPayload(value) {

@@ -959,6 +959,18 @@ body {
   box-shadow: 2px 2px 0 var(--border);
 }
 
+.message__bubble img {
+  display: block;
+  max-width: min(100%, 420px);
+  max-height: 280px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  margin: 8px 0;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
 .message--user .message__bubble {
   background: var(--user-bg);
   border-bottom-right-radius: 6px;
@@ -1919,8 +1931,12 @@ a.btn.nav__btn {
 
 .message__chart img {
   display: block;
-  max-width: 100%;
+  max-width: min(100%, 640px);
+  max-height: 480px;
+  width: auto;
   height: auto;
+  object-fit: contain;
   border-radius: 12px;
   border: 1px solid var(--border);
+  background: #f6f3ec;
 }

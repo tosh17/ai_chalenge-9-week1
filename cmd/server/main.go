@@ -43,8 +43,8 @@ func main() {
 		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day16-mcp-agent").
-		WithSystemPrompt("Ты считаешь картинки и видео в папке. На запрос про файлы, количество, объём или график веди цепочку до конца и не останавливайся текстом посередине: search_media, затем summarize_media с inventory_path, затем chart_media только с summary_path. Ответ пиши после графика: сколько файлов, какой объём. Числа бери только из инструментов.").
+	chatAgent := agent.New("day20-orchestrator").
+		WithSystemPrompt("Ты кулинарный помощник. Подбираешь блюдо из продуктов, которые назвал человек. Факты ищи только на английских страницах: web_search с английским запросом, затем web_fetch, затем translate_en_ru. Ответ человеку только по-русски, без иероглифов и без английских абзацев. Фото блюда — web_image, и сразу под этим блюдом поставь image_url отдельной строкой, без HTML. Блок-схему не рисуй сам. Граммы и минуты бери только из переведённого рецепта.").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithInvariants(invariants).
@@ -66,14 +66,9 @@ func main() {
 		WithCompression(agent.CompressionConfig{Enabled: false}).
 		WithBackendLimit(agent.ProviderDeepSeek, "DeepSeek", cfg.DeepSeekModel, deepseekClient, cfg.ContextTokenLimit)
 
-	var mcpClient *mcp.Client
+	var mcpClients []*mcp.Client
 	if cfg.MCPEnabled {
-		client, err := attachMCP(chatAgent, cfg)
-		if err != nil {
-			log.Printf("mcp off: %v", err)
-		} else {
-			mcpClient = client
-		}
+		mcpClients = attachMCP(chatAgent, cfg)
 	}
 
 	if cfg.LocalEnabled {
@@ -101,9 +96,7 @@ func main() {
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			if mcpClient != nil {
-				_ = mcpClient.Close()
-			}
+			closeMCP(mcpClients)
 			log.Fatalf("server: %v", err)
 		}
 	}()
@@ -114,34 +107,71 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
-	if mcpClient != nil {
-		_ = mcpClient.Close()
+	closeMCP(mcpClients)
+}
+
+func closeMCP(clients []*mcp.Client) {
+	for _, client := range clients {
+		if client != nil {
+			_ = client.Close()
+		}
 	}
 }
 
-func attachMCP(chatAgent *agent.Agent, cfg *config.Config) (*mcp.Client, error) {
+func attachMCP(chatAgent *agent.Agent, cfg *config.Config) []*mcp.Client {
 	jar := cfg.MCPJar
 	if jar == "" {
 		jar = filepath.Join("mcp", "open_meteo", "build", "libs", "open-meteo-0.1.0-all.jar")
 	}
-	if _, err := os.Stat(jar); err != nil {
-		return nil, err
-	}
-	javaBin, err := mcp.FindJava(cfg.MCPJava)
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	var clients []*mcp.Client
+	var sources []agent.ToolSource
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	client, err := mcp.Start(ctx, javaBin, "-Dkotlin-logging.logStartupMessage=false", "-Djava.awt.headless=true", "-jar", jar)
-	if err != nil {
-		return nil, err
+	if _, err := os.Stat(jar); err == nil {
+		if javaBin, err := mcp.FindJava(cfg.MCPJava); err != nil {
+			log.Printf("mcp weather off: %v", err)
+		} else if client, err := mcp.Start(ctx, javaBin, "-Dkotlin-logging.logStartupMessage=false", "-Djava.awt.headless=true", "-jar", jar); err != nil {
+			log.Printf("mcp weather off: %v", err)
+		} else {
+			clients = append(clients, client)
+			sources = append(sources, agent.MCPTools{Client: client, Server: "погода"})
+			log.Printf("mcp weather: %v", toolNames(client))
+		}
+	} else {
+		log.Printf("mcp weather off: %v", err)
 	}
-	chatAgent.WithTools(agent.MCPTools{Client: client})
+	bin := os.Getenv("MCP_BIN")
+	if bin == "" {
+		bin = filepath.Join("bin", "mcp")
+	}
+	for _, spec := range []struct{ arg, server string }{
+		{"search", "поиск"},
+		{"translate", "перевод"},
+		{"diagram", "схема"},
+	} {
+		if _, err := os.Stat(bin); err != nil {
+			log.Printf("mcp %s off: %v", spec.server, err)
+			continue
+		}
+		client, err := mcp.Start(ctx, bin, spec.arg)
+		if err != nil {
+			log.Printf("mcp %s off: %v", spec.server, err)
+			continue
+		}
+		clients = append(clients, client)
+		sources = append(sources, agent.MCPTools{Client: client, Server: spec.server})
+		log.Printf("mcp %s: %v", spec.server, toolNames(client))
+	}
+	if len(sources) > 0 {
+		chatAgent.WithTools(agent.ToolSet(sources))
+	}
+	return clients
+}
+
+func toolNames(client *mcp.Client) []string {
 	names := make([]string, 0)
 	for _, tool := range client.Tools() {
 		names = append(names, tool.Name)
 	}
-	log.Printf("mcp connected: %s tools=%v", jar, names)
-	return client, nil
+	return names
 }

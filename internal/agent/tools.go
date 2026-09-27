@@ -10,9 +10,9 @@ import (
 	"github.com/tosh17/deepseek-service/internal/mcp"
 )
 
-const maxToolRounds = 6
+const maxToolRounds = 12
 
-const mcpToolHint = `ИНСТРУМЕНТЫ: картинки и видео. Цепочку не прерывай текстом: 1) search_media 2) summarize_media с inventory_path 3) chart_media только с summary_path. JSON сводки в chart_media не вставляй. Ответ пиши после графика. Числа не выдумывай.`
+const mcpToolHint = `ИНСТРУМЕНТЫ: рецепт ищи через web_search запросом на английском, затем web_fetch только по английской ссылке из выдачи. Сразу переведи выдержку через translate_en_ru. Ответ пользователю только по-русски: без иероглифов и без английских абзацев. Картинку блюда бери через web_image (q на английском) и вставь image_url отдельной строкой сразу под этим блюдом, без HTML. Погоду не вызывай, если о ней не спросили. Не отвечай, пока страница не открыта и не переведена. Граммы и время не выдумывай. Блок-схему не вызывай: её добавит система.`
 
 // ToolEvent — один вызов MCP за ход диалога.
 type ToolEvent struct {
@@ -53,6 +53,7 @@ type ToolSource interface {
 // MCPTools адаптирует stdio-клиент MCP к агенту.
 type MCPTools struct {
 	Client *mcp.Client
+	Server string
 }
 
 func (m MCPTools) Tools() []deepseek.Tool {
@@ -66,9 +67,13 @@ func (m MCPTools) Tools() []deepseek.Tool {
 		if len(params) == 0 {
 			params = json.RawMessage(`{"type":"object","properties":{}}`)
 		}
+		desc := tool.Description
+		if m.Server != "" && tool.Name != "draw_flow" {
+			desc = "Сервер «" + m.Server + "». " + desc
+		}
 		out = append(out, deepseek.Tool{
 			Name:        tool.Name,
-			Description: tool.Description,
+			Description: desc,
 			Parameters:  params,
 		})
 	}
@@ -157,6 +162,7 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 	var steps []TurnStep
 	var last deepseek.ChatResult
 	apiN := 0
+	foreignNudged := false
 	for round := 0; round < maxToolRounds; round++ {
 		chat, err := caller.ChatTools(ctx, prompt, tools)
 		apiN++
@@ -172,14 +178,45 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 		}
 		last = chat
 		if len(chat.ToolCalls) == 0 {
-			if mediaChainOpen(events) && round < maxToolRounds-1 {
-				prompt = append(prompt,
-					deepseek.Message{Role: "assistant", Content: chat.Reply},
-					deepseek.Message{Role: "user", Content: "Цепочка не закончена. Сразу вызови следующий инструмент: после search_media — summarize_media с inventory_path, после summarize_media — chart_media с summary_path. Текст не пиши, пока нет графика."},
-				)
-				continue
+			if round < maxToolRounds-1 {
+				if mediaChainOpen(events) {
+					prompt = append(prompt,
+						deepseek.Message{Role: "assistant", Content: chat.Reply},
+						deepseek.Message{Role: "user", Content: "Цепочка не закончена. Сразу вызови следующий инструмент: после search_media — summarize_media с inventory_path, после summarize_media — chart_media с summary_path. Текст не пиши, пока нет графика."},
+					)
+					continue
+				}
+				if researchNeedsFetch(events) {
+					prompt = append(prompt,
+						deepseek.Message{Role: "assistant", Content: chat.Reply},
+						deepseek.Message{Role: "user", Content: "Поиск уже есть, страницу ещё не открывал. Сразу вызови web_fetch по одной английской ссылке из результатов. Ответ пользователю только после перевода."},
+					)
+					continue
+				}
+				if needsTranslate(events) {
+					prompt = append(prompt,
+						deepseek.Message{Role: "assistant", Content: chat.Reply},
+						deepseek.Message{Role: "user", Content: "Страница открыта, перевода ещё нет. Сразу вызови translate_en_ru и передай короткую английскую выдержку с граммами и шагами. Текст пользователю пока не пиши."},
+					)
+					continue
+				}
+				if recipeNeedsPhoto(events) {
+					prompt = append(prompt,
+						deepseek.Message{Role: "assistant", Content: chat.Reply},
+						deepseek.Message{Role: "user", Content: "Страница рецепта уже открыта. Сразу вызови web_image с английским названием блюда. Текст пользователю пока не пиши."},
+					)
+					continue
+				}
+				if !foreignNudged && hasCJK(chat.Reply) {
+					foreignNudged = true
+					prompt = append(prompt,
+						deepseek.Message{Role: "assistant", Content: chat.Reply},
+						deepseek.Message{Role: "user", Content: "В ответе есть иероглифы. Перепиши целиком по-русски, без китайского и без английских фраз. Фото блюд оставь на своих местах."},
+					)
+					continue
+				}
 			}
-			chat.Reply = attachChartURL(chat.Reply, events)
+			chat, events, steps = a.sealTurn(ctx, chat, events, steps)
 			return chat, events, steps, nil
 		}
 		prompt = append(prompt, deepseek.Message{
@@ -205,8 +242,160 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 	final, err := caller.ChatTools(ctx, prompt, nil)
 	apiN++
 	steps = append(steps, llmStep(apiN, final, err))
-	final.Reply = attachChartURL(final.Reply, events)
+	final, events, steps = a.sealTurn(ctx, final, events, steps)
 	return final, events, steps, err
+}
+
+func (a *Agent) sealTurn(ctx context.Context, chat deepseek.ChatResult, events []ToolEvent, steps []TurnStep) (deepseek.ChatResult, []ToolEvent, []TurnStep) {
+	events, steps = a.ensureFlow(ctx, events, steps)
+	chat.Reply = attachChartURL(chat.Reply, events)
+	return chat, events, steps
+}
+
+func (a *Agent) ensureFlow(ctx context.Context, events []ToolEvent, steps []TurnStep) ([]ToolEvent, []TurnStep) {
+	if a.tools == nil || !needsFlow(events) {
+		return events, steps
+	}
+	raw, err := json.Marshal(map[string]any{
+		"title": "Ход запроса",
+		"steps": flowSteps(events),
+	})
+	if err != nil {
+		return events, steps
+	}
+	ex, err := a.tools.Call(ctx, "draw_flow", string(raw))
+	ev := ToolEvent{Name: "draw_flow", Arguments: string(raw), Result: ex.Text, IsError: ex.IsError || err != nil, Request: ex.Request, Response: ex.Response}
+	if err != nil && ev.Result == "" {
+		ev.Result = err.Error()
+	}
+	events = append(events, ev)
+	steps = append(steps, mcpStep(ev))
+	return events, steps
+}
+
+func needsFlow(events []ToolEvent) bool {
+	for _, ev := range events {
+		if ev.Name != "" && ev.Name != "draw_flow" {
+			return true
+		}
+	}
+	return false
+}
+
+func needsTranslate(events []ToolEvent) bool {
+	fetched, translated, tries := false, false, 0
+	for _, ev := range events {
+		if ev.Name == "translate_en_ru" {
+			tries++
+			if !ev.IsError {
+				translated = true
+			}
+		}
+		if ev.IsError {
+			continue
+		}
+		if ev.Name == "web_fetch" {
+			fetched = true
+		}
+	}
+	return fetched && !translated && tries < 2
+}
+
+func hasCJK(s string) bool {
+	for _, r := range s {
+		if r >= 0x3040 && r <= 0x30FF || r >= 0x3400 && r <= 0x9FFF || r >= 0xAC00 && r <= 0xD7AF {
+			return true
+		}
+	}
+	return false
+}
+
+func recipeNeedsPhoto(events []ToolEvent) bool {
+	fetched, tries, shown := false, 0, false
+	for _, ev := range events {
+		if ev.Name == "web_image" {
+			tries++
+			if !ev.IsError {
+				shown = true
+			}
+		}
+		if ev.IsError {
+			continue
+		}
+		if ev.Name == "web_fetch" {
+			fetched = true
+		}
+	}
+	return fetched && !shown && tries < 2
+}
+
+func researchNeedsFetch(events []ToolEvent) bool {
+	search, fetch := false, false
+	for _, ev := range events {
+		if ev.IsError {
+			continue
+		}
+		switch ev.Name {
+		case "web_search":
+			search = true
+		case "web_fetch":
+			fetch = true
+		case "web_image":
+			fetch = true
+		}
+	}
+	return search && !fetch
+}
+
+func flowSteps(events []ToolEvent) []map[string]string {
+	var out []map[string]string
+	for _, ev := range events {
+		if ev.Name == "" || ev.Name == "draw_flow" {
+			continue
+		}
+		out = append(out, map[string]string{
+			"server": serverOf(ev.Name),
+			"tool":   ev.Name,
+			"detail": stepDetail(ev.Arguments),
+		})
+	}
+	return out
+}
+
+func serverOf(tool string) string {
+	switch tool {
+	case "web_search", "web_fetch", "web_image":
+		return "поиск"
+	case "translate_en_ru":
+		return "перевод"
+	case "get_weather", "observe_city":
+		return "погода"
+	case "search_media", "summarize_media", "chart_media":
+		return "медиа"
+	default:
+		return "mcp"
+	}
+}
+
+func stepDetail(args string) string {
+	var m map[string]any
+	if json.Unmarshal([]byte(args), &m) != nil {
+		return trimDetail(args)
+	}
+	for _, key := range []string{"q", "query", "url", "city", "text"} {
+		if s, ok := m[key].(string); ok && strings.TrimSpace(s) != "" {
+			return trimDetail(s)
+		}
+	}
+	return trimDetail(args)
+}
+
+func trimDetail(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 90 {
+		return s[:90] + "…"
+	}
+	return s
 }
 
 func mediaChainOpen(events []ToolEvent) bool {
@@ -289,7 +478,15 @@ func (a *Agent) toolDefs() []deepseek.Tool {
 	if a.tools == nil {
 		return nil
 	}
-	return a.tools.Tools()
+	all := a.tools.Tools()
+	out := make([]deepseek.Tool, 0, len(all))
+	for _, tool := range all {
+		if tool.Name == "draw_flow" {
+			continue
+		}
+		out = append(out, tool)
+	}
+	return out
 }
 
 func (a *Agent) execTool(ctx context.Context, call deepseek.ToolCall) ToolEvent {
