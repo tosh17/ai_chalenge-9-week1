@@ -87,6 +87,66 @@ func TestCompleteWithTools(t *testing.T) {
 	}
 }
 
+type chainLLM struct {
+	calls int
+}
+
+func (s *chainLLM) Chat(ctx context.Context, messages []deepseek.Message) (deepseek.ChatResult, error) {
+	return s.ChatTools(ctx, messages, nil)
+}
+
+func (s *chainLLM) ChatTools(ctx context.Context, messages []deepseek.Message, tools []deepseek.Tool) (deepseek.ChatResult, error) {
+	s.calls++
+	switch s.calls {
+	case 1:
+		return deepseek.ChatResult{ToolCalls: []deepseek.ToolCall{{ID: "1", Name: "search_media", Arguments: `{}`}}}, nil
+	case 2:
+		return deepseek.ChatResult{Reply: "сейчас посчитаю"}, nil
+	case 3:
+		return deepseek.ChatResult{ToolCalls: []deepseek.ToolCall{{ID: "2", Name: "summarize_media", Arguments: `{"inventory_path":"inv.json"}`}}}, nil
+	case 4:
+		return deepseek.ChatResult{ToolCalls: []deepseek.ToolCall{{ID: "3", Name: "chart_media", Arguments: `{"summary_path":"sum.json"}`}}}, nil
+	default:
+		return deepseek.ChatResult{Reply: "3 файла, 130 Б"}, nil
+	}
+}
+
+type chainTools struct{}
+
+func (chainTools) Tools() []deepseek.Tool {
+	return []deepseek.Tool{{Name: "search_media"}, {Name: "summarize_media"}, {Name: "chart_media"}}
+}
+
+func (chainTools) Call(ctx context.Context, name, arguments string) (ToolExchange, error) {
+	switch name {
+	case "search_media":
+		return ToolExchange{Text: `{"inventory_path":"inv.json","files":3}`}, nil
+	case "summarize_media":
+		return ToolExchange{Text: `{"summary_path":"sum.json","files":3}`}, nil
+	case "chart_media":
+		return ToolExchange{Text: `{"image_url":"/media/chart.png"}`}, nil
+	default:
+		return ToolExchange{Text: "unknown", IsError: true}, nil
+	}
+}
+
+func TestMediaChainContinuesToChart(t *testing.T) {
+	llm := &chainLLM{}
+	a := New("day19").WithTools(chainTools{})
+	chat, events, _, err := a.completeWithTools(context.Background(), llm, []deepseek.Message{
+		{Role: "user", Content: "посчитай файлы и покажи график"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[2].Name != "chart_media" {
+		t.Fatalf("events: %+v", events)
+	}
+	if !strings.Contains(chat.Reply, "/media/chart.png") || !strings.Contains(chat.Reply, "3 файла") {
+		t.Fatalf("reply: %q", chat.Reply)
+	}
+}
+
 func TestAttachChartURL(t *testing.T) {
 	got := attachChartURL("готово", []ToolEvent{{Result: `{"image_url":"/media/chart.png"}`}})
 	if !strings.Contains(got, "/media/chart.png") {

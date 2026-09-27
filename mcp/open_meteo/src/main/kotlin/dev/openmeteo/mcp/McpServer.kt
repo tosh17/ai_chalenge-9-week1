@@ -28,17 +28,15 @@ const val MAX_FORECAST_DAYS = 7
 const val DEFAULT_FORECAST_DAYS = 3
 
 fun runMcpServer() {
-    OpenMeteoClient().use { client ->
+    run {
         val server = Server(
-            Implementation(name = "open-meteo", version = "0.1.0"),
+            Implementation(name = "media", version = "0.1.0"),
             ServerOptions(
                 capabilities = ServerCapabilities(
                     tools = ServerCapabilities.Tools(listChanged = true),
                 ),
             ),
         )
-        server.registerWeatherTool(client)
-        server.registerObserveTool(client)
         server.registerMediaTools()
 
         val transport = StdioServerTransport(

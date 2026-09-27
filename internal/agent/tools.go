@@ -12,7 +12,7 @@ import (
 
 const maxToolRounds = 6
 
-const mcpToolHint = `ИНСТРУМЕНТЫ: текущая погода — get_weather. Ряд замеров сборщика — observation_report: без периода только город, период передавай from и to сам. Картинки и видео — цепочка: 1) search_media 2) summarize_media с inventory_path 3) chart_media только с summary_path. JSON сводки в chart_media не вставляй. Числа не выдумывай. Запись погодных замеров из чата не запускай.`
+const mcpToolHint = `ИНСТРУМЕНТЫ: картинки и видео. Цепочку не прерывай текстом: 1) search_media 2) summarize_media с inventory_path 3) chart_media только с summary_path. JSON сводки в chart_media не вставляй. Ответ пиши после графика. Числа не выдумывай.`
 
 // ToolEvent — один вызов MCP за ход диалога.
 type ToolEvent struct {
@@ -172,6 +172,13 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 		}
 		last = chat
 		if len(chat.ToolCalls) == 0 {
+			if mediaChainOpen(events) && round < maxToolRounds-1 {
+				prompt = append(prompt,
+					deepseek.Message{Role: "assistant", Content: chat.Reply},
+					deepseek.Message{Role: "user", Content: "Цепочка не закончена. Сразу вызови следующий инструмент: после search_media — summarize_media с inventory_path, после summarize_media — chart_media с summary_path. Текст не пиши, пока нет графика."},
+				)
+				continue
+			}
 			chat.Reply = attachChartURL(chat.Reply, events)
 			return chat, events, steps, nil
 		}
@@ -200,6 +207,23 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 	steps = append(steps, llmStep(apiN, final, err))
 	final.Reply = attachChartURL(final.Reply, events)
 	return final, events, steps, err
+}
+
+func mediaChainOpen(events []ToolEvent) bool {
+	searched := false
+	charted := false
+	for _, ev := range events {
+		if ev.IsError {
+			continue
+		}
+		switch ev.Name {
+		case "search_media", "summarize_media":
+			searched = true
+		case "chart_media":
+			charted = true
+		}
+	}
+	return searched && !charted
 }
 
 func attachChartURL(reply string, events []ToolEvent) string {

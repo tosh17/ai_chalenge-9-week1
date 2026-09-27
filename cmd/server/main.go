@@ -18,7 +18,6 @@ import (
 	"github.com/tosh17/deepseek-service/internal/handler"
 	"github.com/tosh17/deepseek-service/internal/mcp"
 	"github.com/tosh17/deepseek-service/internal/memory"
-	"github.com/tosh17/deepseek-service/internal/observe"
 )
 
 func main() {
@@ -45,7 +44,7 @@ func main() {
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
 	chatAgent := agent.New("day16-mcp-agent").
-		WithSystemPrompt("Ты аналитик архива наблюдений и медиафайлов. Отдельный сборщик пишет замеры по Волгограду. На вопрос о циклах и динамике вызови observation_report только с городом: в ответе весь архив и фактическое время замеров. Если пользователь назвал период, передай from и to сам. Инструмент не делает выводов. Сам разбери динамику по времени суток, солнцу, погоде, влажности, ветру и луне и закончи заключением. Текущую погоду вне архива бери через get_weather. Если просят картинки и видео, количество, объём и график — вызови по очереди search_media, затем summarize_media с inventory_path, затем chart_media только с summary_path. Числа бери только из инструментов.").
+		WithSystemPrompt("Ты считаешь картинки и видео в папке. На запрос про файлы, количество, объём или график веди цепочку до конца и не останавливайся текстом посередине: search_media, затем summarize_media с inventory_path, затем chart_media только с summary_path. Ответ пиши после графика: сколько файлов, какой объём. Числа бери только из инструментов.").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithInvariants(invariants).
@@ -69,7 +68,7 @@ func main() {
 
 	var mcpClient *mcp.Client
 	if cfg.MCPEnabled {
-		client, err := attachMCP(chatAgent, cfg, observe.Open(cfg.ObserveDir))
+		client, err := attachMCP(chatAgent, cfg)
 		if err != nil {
 			log.Printf("mcp off: %v", err)
 		} else {
@@ -120,7 +119,7 @@ func main() {
 	}
 }
 
-func attachMCP(chatAgent *agent.Agent, cfg *config.Config, store *observe.Store) (*mcp.Client, error) {
+func attachMCP(chatAgent *agent.Agent, cfg *config.Config) (*mcp.Client, error) {
 	jar := cfg.MCPJar
 	if jar == "" {
 		jar = filepath.Join("mcp", "open_meteo", "build", "libs", "open-meteo-0.1.0-all.jar")
@@ -138,10 +137,7 @@ func attachMCP(chatAgent *agent.Agent, cfg *config.Config, store *observe.Store)
 	if err != nil {
 		return nil, err
 	}
-	chatAgent.WithTools(agent.ToolSet{
-		agent.MCPTools{Client: client},
-		agent.ObservationTools{Store: store},
-	})
+	chatAgent.WithTools(agent.MCPTools{Client: client})
 	names := make([]string, 0)
 	for _, tool := range client.Tools() {
 		names = append(names, tool.Name)
