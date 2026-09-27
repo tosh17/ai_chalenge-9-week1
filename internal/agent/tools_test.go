@@ -86,3 +86,14 @@ func TestCompleteWithTools(t *testing.T) {
 		t.Fatalf("steps: %+v", steps)
 	}
 }
+
+func TestAttachChartURL(t *testing.T) {
+	got := attachChartURL("готово", []ToolEvent{{Result: `{"image_url":"/media/chart.png"}`}})
+	if !strings.Contains(got, "/media/chart.png") {
+		t.Fatalf("url missing: %q", got)
+	}
+	again := attachChartURL(got, []ToolEvent{{Result: `{"image_url":"/media/chart.png"}`}})
+	if strings.Count(again, "/media/chart.png") != 1 {
+		t.Fatalf("duplicated: %q", again)
+	}
+}

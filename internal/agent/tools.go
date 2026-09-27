@@ -10,9 +10,9 @@ import (
 	"github.com/tosh17/deepseek-service/internal/mcp"
 )
 
-const maxToolRounds = 3
+const maxToolRounds = 6
 
-const mcpToolHint = `ИНСТРУМЕНТЫ: текущая погода — get_weather. Ряд замеров сборщика — observation_report. Без периода передавай только город: придёт весь архив и реальное время первого и последнего замера. Если пользователь назвал период, передай from и to сам. Это факты без выводов: динамику и заключение пишешь сам. Числа не выдумывай. Запись замеров делает отдельный процесс, из чата её не запускай.`
+const mcpToolHint = `ИНСТРУМЕНТЫ: текущая погода — get_weather. Ряд замеров сборщика — observation_report: без периода только город, период передавай from и to сам. Картинки и видео — цепочка: 1) search_media 2) summarize_media с inventory_path 3) chart_media только с summary_path. JSON сводки в chart_media не вставляй. Числа не выдумывай. Запись погодных замеров из чата не запускай.`
 
 // ToolEvent — один вызов MCP за ход диалога.
 type ToolEvent struct {
@@ -172,6 +172,7 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 		}
 		last = chat
 		if len(chat.ToolCalls) == 0 {
+			chat.Reply = attachChartURL(chat.Reply, events)
 			return chat, events, steps, nil
 		}
 		prompt = append(prompt, deepseek.Message{
@@ -197,7 +198,27 @@ func (a *Agent) completeWithTools(ctx context.Context, llm LLM, messages []deeps
 	final, err := caller.ChatTools(ctx, prompt, nil)
 	apiN++
 	steps = append(steps, llmStep(apiN, final, err))
+	final.Reply = attachChartURL(final.Reply, events)
 	return final, events, steps, err
+}
+
+func attachChartURL(reply string, events []ToolEvent) string {
+	for _, ev := range events {
+		var payload struct {
+			ImageURL string `json:"image_url"`
+		}
+		if json.Unmarshal([]byte(ev.Result), &payload) != nil || payload.ImageURL == "" {
+			continue
+		}
+		if strings.Contains(reply, payload.ImageURL) {
+			return reply
+		}
+		if strings.TrimSpace(reply) == "" {
+			return payload.ImageURL
+		}
+		return strings.TrimRight(reply, "\n") + "\n" + payload.ImageURL
+	}
+	return reply
 }
 
 func llmStep(n int, chat deepseek.ChatResult, err error) TurnStep {

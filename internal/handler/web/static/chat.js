@@ -134,6 +134,7 @@ function createMessage(role, content, extraClass = "", meta = {}) {
     <div class="message__body">
       ${trace}
       <div class="message__bubble">${escapeHTML(content)}</div>
+      ${chartHTML(content, meta.toolEvents)}
       ${steps}
       ${timeLabel}
     </div>
@@ -141,6 +142,22 @@ function createMessage(role, content, extraClass = "", meta = {}) {
   chatEl.appendChild(el);
   scrollToBottom();
   return el;
+}
+
+function chartHTML(content, toolEvents) {
+  const urls = [];
+  const push = (url) => {
+    if (url && urls.indexOf(url) === -1) urls.push(url);
+  };
+  const re = /\/media\/[A-Za-z0-9._-]+\.png/g;
+  const fromText = String(content || "").match(re) || [];
+  fromText.forEach(push);
+  for (const ev of toolEvents || []) {
+    const fromTool = String(ev.result || "").match(re) || [];
+    fromTool.forEach(push);
+  }
+  if (!urls.length) return "";
+  return `<div class="message__chart">${urls.map((url) => `<img src="${escapeHTML(url)}" alt="График медиафайлов">`).join("")}</div>`;
 }
 
 function prettyPayload(value) {
@@ -1378,6 +1395,7 @@ async function sendMessage(text, opts = {}) {
       skips: data.skips || data.memory?.skips,
       invariants: data.memory?.invariants,
       steps: data.steps,
+      toolEvents: data.tool_events,
     });
     renderMemoryMeta(data.memory);
     history.push({ role: "user", content: text });

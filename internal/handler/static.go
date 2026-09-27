@@ -6,6 +6,9 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 //go:embed web
@@ -38,6 +41,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /chatAi", h.ChatAI)
 	mux.HandleFunc("GET /chatAi/", h.ChatAI)
 	mux.HandleFunc("GET /health", h.Health)
+	mux.HandleFunc("GET /media/{name}", h.MediaFile)
 	mux.HandleFunc("GET /api/providers", h.Providers)
 	mux.HandleFunc("GET /api/history", h.History)
 	mux.HandleFunc("DELETE /api/history", h.ClearHistory)
@@ -70,6 +74,21 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/task/lifecycle", h.TaskLifecycle)
 	mux.HandleFunc("DELETE /api/memory/{layer}", h.MemoryClear)
 	mux.HandleFunc("DELETE /api/memory", h.MemoryClear)
+}
+
+func (h *Handler) MediaFile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || name != filepath.Base(name) || strings.Contains(name, "..") || !strings.HasSuffix(strings.ToLower(name), ".png") {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join("data", "media", name)
+	if _, err := os.Stat(path); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	http.ServeFile(w, r, path)
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {

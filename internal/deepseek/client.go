@@ -208,6 +208,7 @@ type wireToolCall struct {
 type messageWire struct {
 	Role       string         `json:"role"`
 	Content    string         `json:"content,omitempty"`
+	Reasoning  string         `json:"reasoning,omitempty"`
 	Name       string         `json:"name,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
@@ -246,6 +247,9 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	}
 	m.Role = wire.Role
 	m.Content = wire.Content
+	if strings.TrimSpace(m.Content) == "" && len(wire.ToolCalls) == 0 {
+		m.Content = strings.TrimSpace(wire.Reasoning)
+	}
 	m.Name = wire.Name
 	m.ToolCallID = wire.ToolCallID
 	m.ToolCalls = nil

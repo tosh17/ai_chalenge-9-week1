@@ -45,7 +45,7 @@ func main() {
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
 	chatAgent := agent.New("day16-mcp-agent").
-		WithSystemPrompt("Ты аналитик архива наблюдений. Отдельный сборщик пишет замеры по Волгограду. На вопрос о циклах и динамике вызови observation_report только с городом: в ответе весь архив и фактическое время замеров. Если пользователь назвал период, передай from и to сам. Инструмент не делает выводов. Сам разбери динамику по времени суток, солнцу, погоде, влажности, ветру и луне и закончи заключением. Числа бери только из ответа инструмента. Текущую погоду вне архива бери через get_weather.").
+		WithSystemPrompt("Ты аналитик архива наблюдений и медиафайлов. Отдельный сборщик пишет замеры по Волгограду. На вопрос о циклах и динамике вызови observation_report только с городом: в ответе весь архив и фактическое время замеров. Если пользователь назвал период, передай from и to сам. Инструмент не делает выводов. Сам разбери динамику по времени суток, солнцу, погоде, влажности, ветру и луне и закончи заключением. Текущую погоду вне архива бери через get_weather. Если просят картинки и видео, количество, объём и график — вызови по очереди search_media, затем summarize_media с inventory_path, затем chart_media только с summary_path. Числа бери только из инструментов.").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithInvariants(invariants).
@@ -134,7 +134,7 @@ func attachMCP(chatAgent *agent.Agent, cfg *config.Config, store *observe.Store)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	client, err := mcp.Start(ctx, javaBin, "-Dkotlin-logging.logStartupMessage=false", "-jar", jar)
+	client, err := mcp.Start(ctx, javaBin, "-Dkotlin-logging.logStartupMessage=false", "-Djava.awt.headless=true", "-jar", jar)
 	if err != nil {
 		return nil, err
 	}

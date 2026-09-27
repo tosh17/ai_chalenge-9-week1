@@ -43,3 +43,14 @@ func TestPlainMessageKeepsContent(t *testing.T) {
 		t.Fatalf("plain: %s", raw)
 	}
 }
+
+func TestEmptyContentUsesReasoning(t *testing.T) {
+	var msg Message
+	raw := []byte(`{"role":"assistant","content":"","reasoning":"3 файла, 130 Б"}`)
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Content != "3 файла, 130 Б" {
+		t.Fatalf("content: %q", msg.Content)
+	}
+}

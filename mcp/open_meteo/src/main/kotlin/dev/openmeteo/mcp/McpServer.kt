@@ -39,6 +39,7 @@ fun runMcpServer() {
         )
         server.registerWeatherTool(client)
         server.registerObserveTool(client)
+        server.registerMediaTools()
 
         val transport = StdioServerTransport(
             input = System.`in`.asInput(),
@@ -114,7 +115,7 @@ fun parseDays(raw: JsonElement?): DaysParse {
     return DaysParse.Ok(days)
 }
 
-private fun JsonElement?.asText(): String? {
+internal fun JsonElement?.asText(): String? {
     val primitive = this as? JsonPrimitive ?: return null
     return primitive.contentOrNull
 }
@@ -148,7 +149,7 @@ private fun Server.registerObserveTool(client: OpenMeteoClient) {
     }
 }
 
-private fun errorResult(message: String) = CallToolResult(
+internal fun errorResult(message: String) = CallToolResult(
     content = listOf(TextContent(message)),
     isError = true,
 )
