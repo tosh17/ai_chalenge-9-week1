@@ -162,7 +162,9 @@ function createCited(compare, meta = {}) {
     <div class="message__body">
       <div class="message__bubble">
         ${compare.search_query ? `<p class="compare__source">Поиск по книге: ${escapeHTML(compare.search_query)}</p>` : ""}
-        ${compare.rewrite ? `<p class="compare__source">Перефраз: ${escapeHTML(compare.rewrite)}. До фильтра ${compare.k_before}, порог ${compare.threshold}, после ${compare.k_after}.</p>` : ""}
+        ${compare.rewrite ? `<p class="compare__source">${compare.fallback
+          ? `Перефраз «${escapeHTML(compare.rewrite)}» ниже порога. Ответ по фразе «${escapeHTML(compare.search_query || "")}».`
+          : `Перефраз: ${escapeHTML(compare.rewrite)}.`} До фильтра ${compare.k_before}, порог ${compare.threshold}, после ${compare.k_after ?? 0}.</p>` : ""}
         ${gate}
         <h3>Ответ</h3>
         <p>${escapeHTML(answer)}</p>

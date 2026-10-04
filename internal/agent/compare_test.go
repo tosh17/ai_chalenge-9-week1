@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 	"github.com/tosh17/deepseek-service/internal/index"
@@ -51,7 +53,7 @@ func TestAnswerCitedRefusesWeakContext(t *testing.T) {
 	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
 		{ChunkID: "s1", Section: "Boiled Coffee", Text: "1 cup coffee", Embedding: []float32{1, 0}},
 	}))
-	cmp := a.answerCited(context.Background(), failLLM{}, "масло в двигателе", "oil", "engine oil", []float32{0, 1})
+	cmp := a.answerCited(context.Background(), failLLM{}, "масло в двигателе", "oil", "engine oil", []float32{0, 1}, []float32{0, 1})
 	if !cmp.Unknown || !strings.HasPrefix(cmp.Fixed.Reply, "Не знаю") || len(cmp.Citations) != 0 {
 		t.Fatalf("%+v", cmp)
 	}
@@ -61,7 +63,7 @@ func TestAnswerCitedAttachesSourceAndQuote(t *testing.T) {
 	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
 		{ChunkID: "s1", Section: "Boiled Coffee", Text: "Boil 3 minutes.", Embedding: []float32{1, 0}},
 	}))
-	cmp := a.answerCited(context.Background(), echoSideLLM{}, "кофе", "coffee", "boiled coffee", []float32{1, 0})
+	cmp := a.answerCited(context.Background(), echoSideLLM{}, "кофе", "coffee", "boiled coffee", []float32{1, 0}, []float32{1, 0})
 	if cmp.Unknown || len(cmp.Citations) != 1 {
 		t.Fatalf("%+v", cmp)
 	}
@@ -71,6 +73,41 @@ func TestAnswerCitedAttachesSourceAndQuote(t *testing.T) {
 	}
 	if !strings.Contains(cmp.Struct.Reply, "s1") || !strings.Contains(cmp.Fixed.Reply, "3 minutes") {
 		t.Fatalf("reply %q quotes %q", cmp.Fixed.Reply, cmp.Struct.Reply)
+	}
+}
+
+func TestAnswerCitedFallsBackToSearchPhrase(t *testing.T) {
+	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
+		{ChunkID: "tea", Section: "How to Make Tea", Text: "3 teaspoons tea, 2 cups boiling water, five minutes.", Embedding: []float32{1, 0}},
+	}))
+	cmp := a.answerCited(context.Background(), echoSideLLM{}, "как заварить чай", "how to brew tea", "Brewed Tea", []float32{1, 0}, []float32{0, 1})
+	if cmp.Unknown || !cmp.Fallback || cmp.KAfter != 1 || len(cmp.Citations) != 1 || cmp.Citations[0].Section != "How to Make Tea" {
+		t.Fatalf("%+v", cmp)
+	}
+}
+
+func TestBrewedTeaUsesSearchPhrase(t *testing.T) {
+	if _, err := os.Stat("../../data/cookbook/struct.json"); err != nil {
+		t.Skip("нет индекса")
+	}
+	manual, err := index.OpenSearcher("../../data/cookbook/struct.json", "http://10.10.1.101:11434", "nomic-embed-text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New("cite").WithManual(manual)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	raw, err := manual.QueryVector(ctx, "how to brew tea")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re, err := manual.QueryVector(ctx, "Brewed Tea")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmp := a.answerCited(ctx, echoSideLLM{}, "как заварить чай", "how to brew tea", "Brewed Tea", raw, re)
+	if cmp.Unknown || !cmp.Fallback || cmp.KAfter != 1 || len(cmp.Citations) != 1 || cmp.Citations[0].Section != "How to Make Tea" {
+		t.Fatalf("unknown=%v fallback=%v after=%d cites=%v", cmp.Unknown, cmp.Fallback, cmp.KAfter, cmp.Citations)
 	}
 }
 

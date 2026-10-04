@@ -37,9 +37,10 @@ type ChunkCompare struct {
 	Query       string           `json:"query"`
 	SearchQuery string           `json:"search_query,omitempty"`
 	Rewrite     string           `json:"rewrite,omitempty"`
-	KBefore     int              `json:"k_before,omitempty"`
-	KAfter      int              `json:"k_after,omitempty"`
+	KBefore     int              `json:"k_before"`
+	KAfter      int              `json:"k_after"`
 	Threshold   float64          `json:"threshold,omitempty"`
+	Fallback    bool             `json:"fallback,omitempty"`
 	MarkLabel   string           `json:"mark_label,omitempty"`
 	Fixed       SideAnswer       `json:"fixed"`
 	Struct      SideAnswer       `json:"struct"`
@@ -80,9 +81,7 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 		rewritten = searchQuery
 	}
 	start := time.Now()
-	cmp := a.answerCited(ctx, b.llm, req.Message, searchQuery, rewritten, reVec)
-	cmp.Controls = controlRows(day24Baseline())
-	cmp.MarkLabel = "смысл совпал"
+	cmp := a.answerCited(ctx, b.llm, req.Message, searchQuery, rewritten, rawVec, reVec)
 	duration := time.Since(start).Milliseconds()
 	reply := formatCompareReply(cmp)
 	if cmp.Fixed.Error != "" && cmp.Struct.Error != "" {
@@ -195,9 +194,19 @@ func (a *Agent) answerFiltered(ctx context.Context, llm LLM, query, searchQuery 
 	}
 }
 
-func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, rewritten string, reVec []float32) ChunkCompare {
+func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, rewritten string, rawVec, reVec []float32) ChunkCompare {
 	wide := a.manual.Matches(reVec, index.RecallK)
 	filtered := index.Filter(index.Rerank(wide, rewritten), index.MinScore, index.AnswerK)
+	fellBack := false
+	if len(filtered) == 0 && searchQuery != rewritten && len(rawVec) > 0 {
+		rawWide := a.manual.Matches(rawVec, index.RecallK)
+		rawKept := index.Filter(index.Rerank(rawWide, searchQuery), index.MinScore, index.AnswerK)
+		if len(rawKept) > 0 {
+			wide = rawWide
+			filtered = rawKept
+			fellBack = true
+		}
+	}
 	cmp := ChunkCompare{
 		Query:       query,
 		SearchQuery: searchQuery,
@@ -205,6 +214,7 @@ func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, re
 		KBefore:     len(wide),
 		KAfter:      len(filtered),
 		Threshold:   index.MinScore,
+		Fallback:    fellBack,
 		Report:      a.report,
 		Fixed:       SideAnswer{Label: "источники"},
 		Struct:      SideAnswer{Label: "цитаты"},
