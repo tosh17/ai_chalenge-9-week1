@@ -138,37 +138,40 @@ function createCompare(compare, meta = {}) {
     : "";
   const fixedText = compare.fixed?.reply || compare.fixed?.error || "";
   const structText = compare.struct?.reply || compare.struct?.error || "";
-  const report = compare.report;
-  const reportHTML = report && report.fixed && report.struct ? `
-        <p class="compare__source">${escapeHTML((report.files_used && report.files_used[0]) || "книга")}, ${report.runes} символов, около ${report.pages_estimate} стр.</p>
+  const leftTitle = compare.fixed?.label || "Без RAG";
+  const rightTitle = compare.struct?.label || "С RAG";
+  const controls = Array.isArray(compare.controls) ? compare.controls : [];
+  let controlRows = "";
+  for (const row of controls) {
+    const mark = (ok) => (ok ? "да" : "нет");
+    controlRows += `<tr><td>${escapeHTML(row.question || "")}</td><td>${escapeHTML(row.expect || "")}</td><td>${escapeHTML(row.sources || "")}</td><td>${mark(row.plain_hit)}</td><td>${mark(row.rag_hit)}</td><td>${mark(row.source_hit)}</td></tr>`;
+  }
+  const controlsHTML = controls.length ? `
+        <p class="compare__source">10 контрольных вопросов</p>
         <table class="compare__table">
-          <tr><th></th><th>фиксированное окно</th><th>по главам и рецептам</th></tr>
-          <tr><td>чанков</td><td>${report.fixed.chunks}</td><td>${report.struct.chunks}</td></tr>
-          <tr><td>средняя длина</td><td>${report.fixed.avg_runes}</td><td>${report.struct.avg_runes}</td></tr>
-          <tr><td>мин–макс</td><td>${report.fixed.min_runes}–${report.fixed.max_runes}</td><td>${report.struct.min_runes}–${report.struct.max_runes}</td></tr>
-          <tr><td>разделов</td><td>${report.fixed.sections}</td><td>${report.struct.sections}</td></tr>
-          <tr><td>заголовков разрезано</td><td>${report.headings_split_by_fixed}</td><td>0</td></tr>
+          <tr><th>вопрос</th><th>ожидание</th><th>источник</th><th>${escapeHTML(leftTitle)}</th><th>${escapeHTML(rightTitle)}</th><th>источник найден</th></tr>
+          ${controlRows}
         </table>` : "";
   el.innerHTML = `
     <div class="message__avatar">AI</div>
     <div class="message__body">
       <div class="message__bubble">
-        ${reportHTML}
         ${compare.search_query ? `<p class="compare__source">Поиск по книге: ${escapeHTML(compare.search_query)}</p>` : ""}
         <table class="compare__table">
-          <tr><th></th><th>фиксированное окно</th><th>по главам и рецептам</th></tr>
+          <tr><th></th><th>${escapeHTML(leftTitle)}</th><th>${escapeHTML(rightTitle)}</th></tr>
           ${body}
         </table>
         <div class="compare__grid">
           <section>
-            <h3>Фиксированное окно</h3>
+            <h3>${escapeHTML(leftTitle)}</h3>
             <p>${escapeHTML(fixedText)}</p>
           </section>
           <section>
-            <h3>По главам</h3>
+            <h3>${escapeHTML(rightTitle)}</h3>
             <p>${escapeHTML(structText)}</p>
           </section>
         </div>
+        ${controlsHTML}
       </div>
       ${timeLabel}
     </div>

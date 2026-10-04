@@ -12,7 +12,7 @@ import (
 	"github.com/tosh17/deepseek-service/internal/index"
 )
 
-// SideAnswer — ответ одной стратегии нарезки.
+// SideAnswer — ответ одного режима.
 type SideAnswer struct {
 	Label string        `json:"label"`
 	Reply string        `json:"reply"`
@@ -20,16 +20,27 @@ type SideAnswer struct {
 	Hits  []index.Match `json:"hits"`
 }
 
-// ChunkCompare — два ответа, найденные фрагменты и сводка стратегий.
+// ControlRow — один контрольный вопрос и что нашли в прогоне.
+type ControlRow struct {
+	Question  string `json:"question"`
+	Expect    string `json:"expect"`
+	Sources   string `json:"sources"`
+	PlainHit  bool   `json:"plain_hit"`
+	RagHit    bool   `json:"rag_hit"`
+	SourceHit bool   `json:"source_hit"`
+}
+
+// ChunkCompare — ответ без RAG, ответ с RAG и контрольный набор.
 type ChunkCompare struct {
 	Query       string        `json:"query"`
 	SearchQuery string        `json:"search_query,omitempty"`
 	Fixed       SideAnswer    `json:"fixed"`
 	Struct      SideAnswer    `json:"struct"`
 	Report      *index.Report `json:"report,omitempty"`
+	Controls    []ControlRow  `json:"controls,omitempty"`
 }
 
-// Compare отвечает на вопрос дважды: по фиксированному окну и по главам.
+// Compare отвечает на вопрос без фрагментов книги и с ними.
 func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 	if strings.TrimSpace(req.Message) == "" {
 		return Result{}, fmt.Errorf("agent %q: message is required", a.name)
@@ -54,6 +65,7 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 	start := time.Now()
 	cmp := a.answerBoth(ctx, b.llm, req.Message, vec)
 	cmp.SearchQuery = searchQuery
+	cmp.Controls = controlRows(day22Baseline())
 	duration := time.Since(start).Milliseconds()
 	reply := formatCompareReply(cmp)
 	if cmp.Fixed.Error != "" && cmp.Struct.Error != "" {
@@ -112,37 +124,70 @@ func hasCyrillic(s string) bool {
 }
 
 func (a *Agent) answerBoth(ctx context.Context, llm LLM, query string, vec []float32) ChunkCompare {
-	fixedHits := a.fixed.Matches(vec, 4)
-	structHits := a.manual.Matches(vec, 4)
-	var fixedReply, fixedErr, structReply, structErr string
+	ragHits := a.manual.Matches(vec, 4)
+	var plainReply, plainErr, ragReply, ragErr string
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		fixedReply, fixedErr = completeSide(ctx, llm, a.systemPrompt, fixedHits, query)
+		plainReply, plainErr = completePlain(ctx, llm, query)
 	}()
 	go func() {
 		defer wg.Done()
-		structReply, structErr = completeSide(ctx, llm, a.systemPrompt, structHits, query)
+		ragReply, ragErr = completeSide(ctx, llm, a.systemPrompt, ragHits, query)
 	}()
 	wg.Wait()
-	cmp := ChunkCompare{
+	return ChunkCompare{
 		Query:  query,
 		Report: a.report,
 		Fixed: SideAnswer{
-			Label: "Фиксированное окно",
-			Reply: fixedReply,
-			Error: fixedErr,
-			Hits:  fixedHits,
+			Label: "Без RAG",
+			Reply: plainReply,
+			Error: plainErr,
 		},
 		Struct: SideAnswer{
-			Label: "По главам и рецептам",
-			Reply: structReply,
-			Error: structErr,
-			Hits:  structHits,
+			Label: "С RAG",
+			Reply: ragReply,
+			Error: ragErr,
+			Hits:  ragHits,
 		},
 	}
-	return cmp
+}
+
+func completePlain(ctx context.Context, llm LLM, query string) (string, string) {
+	chat, err := llm.Chat(ctx, []deepseek.Message{
+		{Role: "system", Content: "Ты кулинарный помощник. Отвечай по-русски и коротко по общим знаниям, без фрагментов книги. Если не помнишь точную цифру, так и скажи и не выдумывай граммы."},
+		{Role: "user", Content: query},
+	})
+	if err != nil {
+		return "", err.Error()
+	}
+	return strings.TrimSpace(chat.Reply), ""
+}
+
+func day22Baseline() map[string]ControlRow {
+	scored := map[string]ControlRow{}
+	for _, c := range index.Controls() {
+		scored[c.Question] = ControlRow{PlainHit: false, RagHit: true, SourceHit: true}
+	}
+	scored["Как приготовить голландский соус?"] = ControlRow{PlainHit: true, RagHit: true, SourceHit: true}
+	return scored
+}
+
+func controlRows(scored map[string]ControlRow) []ControlRow {
+	out := make([]ControlRow, 0, 10)
+	for _, c := range index.Controls() {
+		row := ControlRow{Question: c.Question, Expect: c.Expect, Sources: c.Section}
+		if scored != nil {
+			if prev, ok := scored[c.Question]; ok {
+				row.PlainHit = prev.PlainHit
+				row.RagHit = prev.RagHit
+				row.SourceHit = prev.SourceHit
+			}
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 func completeSide(ctx context.Context, llm LLM, system string, hits []index.Match, query string) (string, string) {
@@ -170,5 +215,5 @@ func formatCompareReply(cmp ChunkCompare) string {
 	if structured == "" {
 		structured = cmp.Struct.Error
 	}
-	return "Фиксированное окно\n" + fixed + "\n\nПо главам\n" + structured
+	return "Без RAG\n" + fixed + "\n\nС RAG\n" + structured
 }

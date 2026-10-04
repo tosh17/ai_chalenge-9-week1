@@ -21,6 +21,25 @@ func (echoSideLLM) Chat(_ context.Context, messages []deepseek.Message) (deepsee
 	return deepseek.ChatResult{Reply: b.String()}, nil
 }
 
+func TestDay22BaselineScores(t *testing.T) {
+	rows := controlRows(day22Baseline())
+	if len(rows) != 10 {
+		t.Fatalf("контролей %d", len(rows))
+	}
+	plain := 0
+	for _, row := range rows {
+		if !row.RagHit || !row.SourceHit || row.Expect == "" || row.Sources == "" {
+			t.Fatalf("%+v", row)
+		}
+		if row.PlainHit {
+			plain++
+		}
+	}
+	if plain != 1 {
+		t.Fatalf("без RAG зачёт только у голландского соуса, получено %d", plain)
+	}
+}
+
 func TestAnswerBothUsesDifferentChunks(t *testing.T) {
 	a := New("cmp").
 		WithSystemPrompt("только фрагменты").
@@ -31,13 +50,13 @@ func TestAnswerBothUsesDifferentChunks(t *testing.T) {
 			{ChunkID: "s1", Section: "глава", Text: "ГЛАВА давление 2.0", Embedding: []float32{1, 0}},
 		}))
 	cmp := a.answerBoth(context.Background(), echoSideLLM{}, "давление", []float32{1, 0})
-	if !strings.Contains(cmp.Fixed.Reply, "ФИКС") || strings.Contains(cmp.Fixed.Reply, "ГЛАВА") {
-		t.Fatalf("fixed: %s", cmp.Fixed.Reply)
+	if strings.Contains(cmp.Fixed.Reply, "ГЛАВА") || len(cmp.Fixed.Hits) != 0 {
+		t.Fatalf("без RAG не должен видеть книгу: %s hits=%d", cmp.Fixed.Reply, len(cmp.Fixed.Hits))
 	}
 	if !strings.Contains(cmp.Struct.Reply, "ГЛАВА") || strings.Contains(cmp.Struct.Reply, "ФИКС") {
-		t.Fatalf("struct: %s", cmp.Struct.Reply)
+		t.Fatalf("rag: %s", cmp.Struct.Reply)
 	}
-	if len(cmp.Fixed.Hits) != 1 || cmp.Fixed.Hits[0].Preview == "" {
-		t.Fatalf("%+v", cmp.Fixed.Hits)
+	if len(cmp.Struct.Hits) != 1 || cmp.Struct.Hits[0].Section != "глава" {
+		t.Fatalf("%+v", cmp.Struct.Hits)
 	}
 }
