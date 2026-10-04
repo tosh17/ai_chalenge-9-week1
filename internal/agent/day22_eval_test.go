@@ -39,15 +39,24 @@ func TestDay22ControlAnswers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmp := a.answerBoth(ctx, llm, c.Question, vec)
-		fmt.Printf("Q %s\n  source=%v plain=%v rag=%v\n  plain: %s\n  rag: %s\n",
+		cmp := a.answerFiltered(ctx, llm, c.Question, c.Search, vec, c.Search, vec)
+		fmt.Printf("Q %s\n  raw_source=%v filtered_source=%v raw_facts=%v filtered_facts=%v before=%d after=%d\n  raw: %s\n  filtered: %s\n",
 			c.Question,
+			index.SectionHit(cmp.Fixed.Hits, c.Section),
 			index.SectionHit(cmp.Struct.Hits, c.Section),
 			index.FactsHit(cmp.Fixed.Reply, c.Facts),
 			index.FactsHit(cmp.Struct.Reply, c.Facts),
+			cmp.KBefore,
+			cmp.KAfter,
 			oneLine(cmp.Fixed.Reply),
 			oneLine(cmp.Struct.Reply),
 		)
+		for _, h := range cmp.Fixed.Hits {
+			fmt.Printf("  raw %.3f %s\n", h.Score, h.Section)
+		}
+		for _, h := range cmp.Struct.Hits {
+			fmt.Printf("  flt %.3f %s\n", h.Score, h.Section)
+		}
 	}
 }
 

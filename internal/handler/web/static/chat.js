@@ -143,13 +143,17 @@ function createCompare(compare, meta = {}) {
   const controls = Array.isArray(compare.controls) ? compare.controls : [];
   let controlRows = "";
   for (const row of controls) {
-    const mark = (ok) => (ok ? "да" : "нет");
-    controlRows += `<tr><td>${escapeHTML(row.question || "")}</td><td>${escapeHTML(row.expect || "")}</td><td>${escapeHTML(row.sources || "")}</td><td>${mark(row.plain_hit)}</td><td>${mark(row.rag_hit)}</td><td>${mark(row.source_hit)}</td></tr>`;
+    const mark = (ok, noise) => `${ok ? "да" : "нет"}${Number.isFinite(noise) ? `, лишних ${noise}` : ""}`;
+    controlRows += `<tr><td>${escapeHTML(row.question || "")}</td><td>${escapeHTML(row.expect || "")}</td><td>${escapeHTML(row.sources || "")}</td><td>${mark(row.plain_hit, row.plain_noise)}</td><td>${mark(row.rag_hit, row.rag_noise)}</td><td>${row.source_hit ? "да" : "нет"}</td></tr>`;
   }
+  const markLabel = compare.mark_label || "источник найден";
+  const filterNote = compare.k_before
+    ? `<p class="compare__source">До фильтра ${compare.k_before}, порог ${compare.threshold}, после ${compare.k_after}${compare.rewrite ? `. Перефраз: ${escapeHTML(compare.rewrite)}` : ""}</p>`
+    : "";
   const controlsHTML = controls.length ? `
         <p class="compare__source">10 контрольных вопросов</p>
         <table class="compare__table">
-          <tr><th>вопрос</th><th>ожидание</th><th>источник</th><th>${escapeHTML(leftTitle)}</th><th>${escapeHTML(rightTitle)}</th><th>источник найден</th></tr>
+          <tr><th>вопрос</th><th>ожидание</th><th>источник</th><th>${escapeHTML(leftTitle)}</th><th>${escapeHTML(rightTitle)}</th><th>${escapeHTML(markLabel)}</th></tr>
           ${controlRows}
         </table>` : "";
   el.innerHTML = `
@@ -157,6 +161,7 @@ function createCompare(compare, meta = {}) {
     <div class="message__body">
       <div class="message__bubble">
         ${compare.search_query ? `<p class="compare__source">Поиск по книге: ${escapeHTML(compare.search_query)}</p>` : ""}
+        ${filterNote}
         <table class="compare__table">
           <tr><th></th><th>${escapeHTML(leftTitle)}</th><th>${escapeHTML(rightTitle)}</th></tr>
           ${body}

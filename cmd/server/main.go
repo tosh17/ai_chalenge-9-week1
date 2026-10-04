@@ -44,7 +44,7 @@ func main() {
 		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day22-rag").
+	chatAgent := agent.New("day23-rerank").
 		WithSystemPrompt("Ты кулинарный помощник. Отвечай по фрагментам поваренной книги из системного сообщения. Граммы, время и шаги бери только оттуда. Если нужного рецепта во фрагментах нет, так и скажи. Отвечай по-русски и коротко.").
 		WithLayers(layers).
 		WithProfiles(profiles).

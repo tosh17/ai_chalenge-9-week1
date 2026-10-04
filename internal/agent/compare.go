@@ -22,25 +22,32 @@ type SideAnswer struct {
 
 // ControlRow — один контрольный вопрос и что нашли в прогоне.
 type ControlRow struct {
-	Question  string `json:"question"`
-	Expect    string `json:"expect"`
-	Sources   string `json:"sources"`
-	PlainHit  bool   `json:"plain_hit"`
-	RagHit    bool   `json:"rag_hit"`
-	SourceHit bool   `json:"source_hit"`
+	Question   string `json:"question"`
+	Expect     string `json:"expect"`
+	Sources    string `json:"sources"`
+	PlainHit   bool   `json:"plain_hit"`
+	RagHit     bool   `json:"rag_hit"`
+	SourceHit  bool   `json:"source_hit"`
+	PlainNoise int    `json:"plain_noise"`
+	RagNoise   int    `json:"rag_noise"`
 }
 
-// ChunkCompare — ответ без RAG, ответ с RAG и контрольный набор.
+// ChunkCompare — ответ без фильтра и ответ после порога, реранкинга и перефразирования.
 type ChunkCompare struct {
 	Query       string        `json:"query"`
 	SearchQuery string        `json:"search_query,omitempty"`
+	Rewrite     string        `json:"rewrite,omitempty"`
+	KBefore     int           `json:"k_before,omitempty"`
+	KAfter      int           `json:"k_after,omitempty"`
+	Threshold   float64       `json:"threshold,omitempty"`
+	MarkLabel   string        `json:"mark_label,omitempty"`
 	Fixed       SideAnswer    `json:"fixed"`
 	Struct      SideAnswer    `json:"struct"`
 	Report      *index.Report `json:"report,omitempty"`
 	Controls    []ControlRow  `json:"controls,omitempty"`
 }
 
-// Compare отвечает на вопрос без фрагментов книги и с ними.
+// Compare отвечает по сырому топ-4 и по тому же поиску после перефразирования, реранкинга и порога.
 func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 	if strings.TrimSpace(req.Message) == "" {
 		return Result{}, fmt.Errorf("agent %q: message is required", a.name)
@@ -58,14 +65,20 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 	}
 
 	searchQuery := a.searchQuery(ctx, b.llm, req.Message)
-	vec, err := a.manual.QueryVector(ctx, searchQuery)
+	rewritten := a.rewriteQuery(ctx, b.llm, req.Message, searchQuery)
+	rawVec, err := a.manual.QueryVector(ctx, searchQuery)
 	if err != nil {
 		return Result{Provider: providerID, Model: b.model}, fmt.Errorf("agent %q: вектор вопроса: %w", a.name, err)
 	}
+	reVec, err := a.manual.QueryVector(ctx, rewritten)
+	if err != nil {
+		reVec = rawVec
+		rewritten = searchQuery
+	}
 	start := time.Now()
-	cmp := a.answerBoth(ctx, b.llm, req.Message, vec)
-	cmp.SearchQuery = searchQuery
-	cmp.Controls = controlRows(day22Baseline())
+	cmp := a.answerFiltered(ctx, b.llm, req.Message, searchQuery, rawVec, rewritten, reVec)
+	cmp.Controls = controlRows(day23Baseline())
+	cmp.MarkLabel = "факты с фильтром"
 	duration := time.Since(start).Milliseconds()
 	reply := formatCompareReply(cmp)
 	if cmp.Fixed.Error != "" && cmp.Struct.Error != "" {
@@ -114,6 +127,22 @@ func (a *Agent) searchQuery(ctx context.Context, llm LLM, query string) string {
 	return line
 }
 
+func (a *Agent) rewriteQuery(ctx context.Context, llm LLM, query, fallback string) string {
+	chat, err := llm.Chat(ctx, []deepseek.Message{
+		{Role: "system", Content: "Сожми кулинарный запрос до английского названия блюда, 2–6 слов, как заголовок рецепта. Без кавычек и пояснений."},
+		{Role: "user", Content: query},
+	})
+	if err != nil {
+		return fallback
+	}
+	line := strings.Trim(strings.TrimSpace(strings.Split(chat.Reply, "\n")[0]), `"'«»`)
+	fields := strings.Fields(line)
+	if line == "" || len(fields) > 8 {
+		return fallback
+	}
+	return line
+}
+
 func hasCyrillic(s string) bool {
 	for _, r := range s {
 		if unicode.Is(unicode.Cyrillic, r) {
@@ -123,55 +152,61 @@ func hasCyrillic(s string) bool {
 	return false
 }
 
-func (a *Agent) answerBoth(ctx context.Context, llm LLM, query string, vec []float32) ChunkCompare {
-	ragHits := a.manual.Matches(vec, 4)
-	var plainReply, plainErr, ragReply, ragErr string
+func (a *Agent) answerFiltered(ctx context.Context, llm LLM, query, searchQuery string, rawVec []float32, rewritten string, reVec []float32) ChunkCompare {
+	rawHits := a.manual.Matches(rawVec, index.AnswerK)
+	wide := a.manual.Matches(reVec, index.RecallK)
+	filtered := index.Filter(index.Rerank(wide, rewritten), index.MinScore, index.AnswerK)
+	var rawReply, rawErr, filteredReply, filteredErr string
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		plainReply, plainErr = completePlain(ctx, llm, query)
+		rawReply, rawErr = completeSide(ctx, llm, a.systemPrompt, rawHits, query)
 	}()
 	go func() {
 		defer wg.Done()
-		ragReply, ragErr = completeSide(ctx, llm, a.systemPrompt, ragHits, query)
+		filteredReply, filteredErr = completeSide(ctx, llm, a.systemPrompt, filtered, query)
 	}()
 	wg.Wait()
 	return ChunkCompare{
-		Query:  query,
-		Report: a.report,
+		Query:       query,
+		SearchQuery: searchQuery,
+		Rewrite:     rewritten,
+		KBefore:     len(wide),
+		KAfter:      len(filtered),
+		Threshold:   index.MinScore,
+		Report:      a.report,
 		Fixed: SideAnswer{
-			Label: "Без RAG",
-			Reply: plainReply,
-			Error: plainErr,
+			Label: "Без фильтра",
+			Reply: rawReply,
+			Error: rawErr,
+			Hits:  rawHits,
 		},
 		Struct: SideAnswer{
-			Label: "С RAG",
-			Reply: ragReply,
-			Error: ragErr,
-			Hits:  ragHits,
+			Label: "С фильтром",
+			Reply: filteredReply,
+			Error: filteredErr,
+			Hits:  filtered,
 		},
 	}
 }
 
-func completePlain(ctx context.Context, llm LLM, query string) (string, string) {
-	chat, err := llm.Chat(ctx, []deepseek.Message{
-		{Role: "system", Content: "Ты кулинарный помощник. Отвечай по-русски и коротко по общим знаниям, без фрагментов книги. Если не помнишь точную цифру, так и скажи и не выдумывай граммы."},
-		{Role: "user", Content: query},
-	})
-	if err != nil {
-		return "", err.Error()
+func day23Baseline() map[string]ControlRow {
+	hit := func(plainNoise, ragNoise int) ControlRow {
+		return ControlRow{PlainHit: true, RagHit: true, SourceHit: true, PlainNoise: plainNoise, RagNoise: ragNoise}
 	}
-	return strings.TrimSpace(chat.Reply), ""
-}
-
-func day22Baseline() map[string]ControlRow {
-	scored := map[string]ControlRow{}
-	for _, c := range index.Controls() {
-		scored[c.Question] = ControlRow{PlainHit: false, RagHit: true, SourceHit: true}
+	return map[string]ControlRow{
+		"Как сварить кофе в кофейнике?":     hit(2, 2),
+		"Как сделать фильтрованный кофе?":   hit(3, 1),
+		"Как заварить чай?":                 hit(3, 0),
+		"Как приготовить лимонад?":          hit(3, 1),
+		"Как сварить какао к завтраку?":     hit(3, 1),
+		"Как сделать горячий шоколад?":      hit(3, 2),
+		"Как испечь хлеб на воде?":          hit(3, 3),
+		"Как приготовить голландский соус?": hit(3, 3),
+		"Как сделать мятный джулеп?":        hit(3, 0),
+		"Как приготовить имбирный пунш?":    hit(3, 2),
 	}
-	scored["Как приготовить голландский соус?"] = ControlRow{PlainHit: true, RagHit: true, SourceHit: true}
-	return scored
 }
 
 func controlRows(scored map[string]ControlRow) []ControlRow {
@@ -183,6 +218,8 @@ func controlRows(scored map[string]ControlRow) []ControlRow {
 				row.PlainHit = prev.PlainHit
 				row.RagHit = prev.RagHit
 				row.SourceHit = prev.SourceHit
+				row.PlainNoise = prev.PlainNoise
+				row.RagNoise = prev.RagNoise
 			}
 		}
 		out = append(out, row)
@@ -215,5 +252,13 @@ func formatCompareReply(cmp ChunkCompare) string {
 	if structured == "" {
 		structured = cmp.Struct.Error
 	}
-	return "Без RAG\n" + fixed + "\n\nС RAG\n" + structured
+	left := cmp.Fixed.Label
+	if left == "" {
+		left = "Без фильтра"
+	}
+	right := cmp.Struct.Label
+	if right == "" {
+		right = "С фильтром"
+	}
+	return left + "\n" + fixed + "\n\n" + right + "\n" + structured
 }
