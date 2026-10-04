@@ -77,8 +77,6 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 	}
 	start := time.Now()
 	cmp := a.answerFiltered(ctx, b.llm, req.Message, searchQuery, rawVec, rewritten, reVec)
-	cmp.Controls = controlRows(day23Baseline())
-	cmp.MarkLabel = "факты с фильтром"
 	duration := time.Since(start).Milliseconds()
 	reply := formatCompareReply(cmp)
 	if cmp.Fixed.Error != "" && cmp.Struct.Error != "" {
