@@ -362,6 +362,12 @@ func (a *Agent) buildMessagesLayers(userMsg string, policy MemoryPolicy) ([]deep
 	}
 	out = append(out, deepseek.Message{Role: "system", Content: system})
 
+	if a.manual != nil && strings.TrimSpace(userMsg) != "" {
+		if block, err := a.manual.Context(context.Background(), userMsg); err == nil && block != "" {
+			out = append(out, deepseek.Message{Role: "system", Content: block})
+		}
+	}
+
 	if policy.InjectProfile && a.profiles != nil {
 		prof := a.profiles.Active()
 		info.Profile = prof

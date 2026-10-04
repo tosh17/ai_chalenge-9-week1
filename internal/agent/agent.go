@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
+	"github.com/tosh17/deepseek-service/internal/index"
 	"github.com/tosh17/deepseek-service/internal/memory"
 	"github.com/tosh17/deepseek-service/internal/tokens"
 )
@@ -66,6 +67,7 @@ type Result struct {
 	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
 	Skips           []memory.IllegalShift      `json:"skips,omitempty"`
 	Debug           *deepseek.DebugInfo
+	Compare         *ChunkCompare `json:"compare,omitempty"`
 }
 
 // ErrContextOverflow — prompt превышает лимит контекста.
@@ -106,6 +108,9 @@ type Agent struct {
 	forceContextLimit bool
 	pricing           tokens.Pricing
 	tools             ToolSource
+	manual            *index.Searcher
+	fixed             *index.Searcher
+	report            *index.Report
 
 	mu      sync.Mutex
 	session tokens.SessionTotals
@@ -134,6 +139,29 @@ func New(name string) *Agent {
 func (a *Agent) WithSystemPrompt(text string) *Agent {
 	a.systemPrompt = text
 	return a
+}
+
+// WithManual подмешивает фрагменты индекса по главам в каждый запрос.
+func (a *Agent) WithManual(s *index.Searcher) *Agent {
+	a.manual = s
+	return a
+}
+
+// WithFixed подключает индекс с фиксированным окном для сравнения нарезок.
+func (a *Agent) WithFixed(s *index.Searcher) *Agent {
+	a.fixed = s
+	return a
+}
+
+// WithReport кладёт сводку двух стратегий в ответ чата.
+func (a *Agent) WithReport(r index.Report) *Agent {
+	a.report = &r
+	return a
+}
+
+// HasCompare — оба индекса загружены, на вопрос можно ответить дважды.
+func (a *Agent) HasCompare() bool {
+	return a != nil && a.manual != nil && a.fixed != nil
 }
 
 // WithBackend регистрирует LLM-бэкенд (deepseek, local, …).

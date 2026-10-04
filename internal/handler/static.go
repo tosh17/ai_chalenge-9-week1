@@ -50,6 +50,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/strategy", h.StrategyGet)
 	mux.HandleFunc("POST /api/strategy", h.StrategySet)
 	mux.HandleFunc("POST /api/strategy/compare", h.StrategyCompare)
+	mux.HandleFunc("GET /api/day21", h.Day21)
 	mux.HandleFunc("POST /api/branch/fork", h.BranchFork)
 	mux.HandleFunc("POST /api/branch/switch", h.BranchSwitch)
 	mux.HandleFunc("POST /api/compress-demo", h.CompressDemo)

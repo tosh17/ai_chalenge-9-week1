@@ -115,6 +115,69 @@ function escapeHTML(text) {
   return div.innerHTML;
 }
 
+function hitCell(hit) {
+  if (!hit) return "—";
+  const score = Number(hit.score);
+  const scoreText = Number.isFinite(score) ? score.toFixed(3) : "";
+  return `<div class="compare__hit"><span>${escapeHTML(scoreText)} ${escapeHTML(hit.section || "")}</span><p>${escapeHTML(hit.preview || "")}</p></div>`;
+}
+
+function createCompare(compare, meta = {}) {
+  hideWelcome();
+  const el = document.createElement("div");
+  el.className = "message message--assistant message--compare";
+  const fixedHits = Array.isArray(compare.fixed?.hits) ? compare.fixed.hits : [];
+  const structHits = Array.isArray(compare.struct?.hits) ? compare.struct.hits : [];
+  const rows = Math.max(fixedHits.length, structHits.length);
+  let body = "";
+  for (let i = 0; i < rows; i += 1) {
+    body += `<tr><td>${i + 1}</td><td>${hitCell(fixedHits[i])}</td><td>${hitCell(structHits[i])}</td></tr>`;
+  }
+  const timeLabel = meta.durationMs != null
+    ? `<span class="message__time">${escapeHTML(formatDuration(meta.durationMs))}</span>`
+    : "";
+  const fixedText = compare.fixed?.reply || compare.fixed?.error || "";
+  const structText = compare.struct?.reply || compare.struct?.error || "";
+  const report = compare.report;
+  const reportHTML = report && report.fixed && report.struct ? `
+        <p class="compare__source">${escapeHTML((report.files_used && report.files_used[0]) || "книга")}, ${report.runes} символов, около ${report.pages_estimate} стр.</p>
+        <table class="compare__table">
+          <tr><th></th><th>фиксированное окно</th><th>по главам и рецептам</th></tr>
+          <tr><td>чанков</td><td>${report.fixed.chunks}</td><td>${report.struct.chunks}</td></tr>
+          <tr><td>средняя длина</td><td>${report.fixed.avg_runes}</td><td>${report.struct.avg_runes}</td></tr>
+          <tr><td>мин–макс</td><td>${report.fixed.min_runes}–${report.fixed.max_runes}</td><td>${report.struct.min_runes}–${report.struct.max_runes}</td></tr>
+          <tr><td>разделов</td><td>${report.fixed.sections}</td><td>${report.struct.sections}</td></tr>
+          <tr><td>заголовков разрезано</td><td>${report.headings_split_by_fixed}</td><td>0</td></tr>
+        </table>` : "";
+  el.innerHTML = `
+    <div class="message__avatar">AI</div>
+    <div class="message__body">
+      <div class="message__bubble">
+        ${reportHTML}
+        ${compare.search_query ? `<p class="compare__source">Поиск по книге: ${escapeHTML(compare.search_query)}</p>` : ""}
+        <table class="compare__table">
+          <tr><th></th><th>фиксированное окно</th><th>по главам и рецептам</th></tr>
+          ${body}
+        </table>
+        <div class="compare__grid">
+          <section>
+            <h3>Фиксированное окно</h3>
+            <p>${escapeHTML(fixedText)}</p>
+          </section>
+          <section>
+            <h3>По главам</h3>
+            <p>${escapeHTML(structText)}</p>
+          </section>
+        </div>
+      </div>
+      ${timeLabel}
+    </div>
+  `;
+  chatEl.appendChild(el);
+  scrollToBottom();
+  return el;
+}
+
 function createMessage(role, content, extraClass = "", meta = {}) {
   hideWelcome();
   const isUser = role === "user";
@@ -1410,6 +1473,16 @@ async function sendMessage(text, opts = {}) {
       return;
     }
     renderRouteEvents(data.route_events);
+    if (data.compare && data.compare.fixed && data.compare.struct) {
+      createCompare(data.compare, { durationMs: data.duration_ms ?? durationMs });
+      updateTokenMeter(data.tokens, data.session);
+      if (data.memory) renderMemory(data.memory);
+      if (data.memory_policy) applyPolicyToForm(data.memory_policy);
+      history.push({ role: "user", content: text });
+      history.push({ role: "assistant", content: data.reply || "" });
+      await loadMemory();
+      return;
+    }
     createMessage("assistant", data.reply, (data.conflicts?.length || data.skips?.length) ? "message--refused" : "", {
       durationMs: data.duration_ms ?? durationMs,
       routeEvents: data.route_events,

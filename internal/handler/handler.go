@@ -7,6 +7,7 @@ import (
 
 	"github.com/tosh17/deepseek-service/internal/agent"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
+	"github.com/tosh17/deepseek-service/internal/index"
 	"github.com/tosh17/deepseek-service/internal/memory"
 	"github.com/tosh17/deepseek-service/internal/tokens"
 )
@@ -53,6 +54,7 @@ type chatResponseBody struct {
 	RouteEvents     []agent.MemoryRouteEvent   `json:"route_events,omitempty"`
 	Conflicts       []memory.InvariantConflict `json:"conflicts,omitempty"`
 	Skips           []memory.IllegalShift      `json:"skips,omitempty"`
+	Compare         *agent.ChunkCompare        `json:"compare,omitempty"`
 	ToolEvents      []agent.ToolEvent          `json:"tool_events,omitempty"`
 	Steps           []agent.TurnStep           `json:"steps,omitempty"`
 	Debug           *deepseek.DebugInfo        `json:"debug,omitempty"`
@@ -173,7 +175,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.agent.Handle(r.Context(), agent.Request{
+	agentReq := agent.Request{
 		Message:          req.Message,
 		History:          req.History,
 		Provider:         req.Provider,
@@ -183,7 +185,14 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		InjectLTM:        req.InjectLTM,
 		InjectProfile:    req.InjectProfile,
 		InjectInvariants: req.InjectInvariants,
-	})
+	}
+	var result agent.Result
+	var err error
+	if h.agent.HasCompare() {
+		result, err = h.agent.Compare(r.Context(), agentReq)
+	} else {
+		result, err = h.agent.Handle(r.Context(), agentReq)
+	}
 	if err != nil {
 		var overflow *agent.ErrContextOverflow
 		if errors.As(err, &overflow) {
@@ -239,6 +248,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		RouteEvents:     result.RouteEvents,
 		Conflicts:       result.Conflicts,
 		Skips:           result.Skips,
+		Compare:         result.Compare,
 		ToolEvents:      result.ToolEvents,
 		Steps:           result.Steps,
 		Debug:           result.Debug,
@@ -315,6 +325,10 @@ func (h *Handler) ChatAIRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) Day21(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, index.Snapshot())
 }
 
 func (h *Handler) StrategyCompare(w http.ResponseWriter, r *http.Request) {

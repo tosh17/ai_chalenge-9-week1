@@ -16,6 +16,7 @@ import (
 	"github.com/tosh17/deepseek-service/internal/config"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 	"github.com/tosh17/deepseek-service/internal/handler"
+	"github.com/tosh17/deepseek-service/internal/index"
 	"github.com/tosh17/deepseek-service/internal/mcp"
 	"github.com/tosh17/deepseek-service/internal/memory"
 )
@@ -43,8 +44,8 @@ func main() {
 		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day20-orchestrator").
-		WithSystemPrompt("Ты кулинарный помощник. Подбираешь блюдо из продуктов, которые назвал человек. Факты ищи только на английских страницах: web_search с английским запросом, затем web_fetch, затем translate_en_ru. Ответ человеку только по-русски, без иероглифов и без английских абзацев. Фото блюда — web_image, и сразу под этим блюдом поставь image_url отдельной строкой, без HTML. Блок-схему не рисуй сам. Граммы и минуты бери только из переведённого рецепта.").
+	chatAgent := agent.New("day21-cookbook").
+		WithSystemPrompt("Ты кулинарный помощник. Отвечай по фрагментам поваренной книги из системного сообщения. Граммы, время и шаги бери только оттуда. Если нужного рецепта во фрагментах нет, так и скажи. Отвечай по-русски и коротко.").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithInvariants(invariants).
@@ -78,6 +79,27 @@ func main() {
 			WithBackendLimit(agent.ProviderLocal, cfg.LocalTitle, cfg.LocalModel, localClient, cfg.LocalContextLimit).
 			WithDefaultProvider(agent.ProviderLocal)
 		log.Printf("local provider enabled (default): %s @ %s (context=%d)", cfg.LocalModel, localURL, cfg.LocalContextLimit)
+	}
+
+	const ollamaURL = "http://10.10.1.101:11434"
+	const embedModel = "nomic-embed-text"
+	if manual, err := index.OpenSearcher("data/cookbook/struct.json", ollamaURL, embedModel); err != nil {
+		log.Printf("cookbook struct off: %v", err)
+	} else {
+		chatAgent.WithManual(manual)
+		log.Printf("cookbook struct: %d chunks", manual.Len())
+	}
+	if fixed, err := index.OpenSearcher("data/cookbook/fixed.json", ollamaURL, embedModel); err != nil {
+		log.Printf("cookbook fixed off: %v", err)
+	} else {
+		chatAgent.WithFixed(fixed)
+		log.Printf("cookbook fixed: %d chunks", fixed.Len())
+	}
+	if report, err := index.LoadReport("data/cookbook/compare.json"); err != nil {
+		log.Printf("cookbook report off: %v", err)
+	} else {
+		chatAgent.WithReport(report)
+		log.Printf("cookbook report: fixed=%d struct=%d", report.Fixed.Chunks, report.Struct.Chunks)
 	}
 
 	h := handler.New(chatAgent, cfg.DeepSeekModel)
