@@ -320,7 +320,7 @@ func (a *Agent) memorySnapshot(policy MemoryPolicy) MemoryInfo {
 	}
 	snap := a.layers.Snapshot()
 	info.ShortTermCount = len(snap.ShortTerm)
-	info.STMPreview = lastN(snap.ShortTerm, policy.STMWindowN)
+	info.STMPreview = lastN(snap.ShortTerm, 0)
 	info.Working = snap.Working
 	info.LongTerm = snap.LongTerm
 	st := memory.NormalizeStage(snap.Working.Task.Stage)

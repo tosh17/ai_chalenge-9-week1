@@ -40,7 +40,7 @@ func TestDay22ControlAnswers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmp := a.answerCited(ctx, llm, c.Question, c.Search, c.Search, vec, TaskView{}, "")
+		cmp := a.answerCited(ctx, llm, c.Question, c.Search, c.Search, vec, vec, TaskView{}, "")
 		quotes := quoteBodies(cmp.Citations)
 		fmt.Printf("Q %s\n  unknown=%v sources=%v quotes=%v grounded=%v facts=%v section=%v cites=%d\n  answer: %s\n",
 			c.Question,
@@ -58,7 +58,7 @@ func TestDay22ControlAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	off := a.answerCited(ctx, llm, "как заменить масло в двигателе", "engine oil", "how to change engine oil", oil, TaskView{}, "")
+	off := a.answerCited(ctx, llm, "как заменить масло в двигателе", "engine oil", "how to change engine oil", oil, oil, TaskView{}, "")
 	fmt.Printf("OFF unknown=%v k_after=%d reply=%s\n", off.Unknown, off.KAfter, oneLine(off.Fixed.Reply))
 }
 

@@ -79,13 +79,13 @@ func runScenario(t *testing.T, ctx context.Context, manual *index.Searcher, llm 
 	cited := 0
 	for i, turn := range turns {
 		task := a.rememberTask(ctx, llm, turn.text)
-		searchQuery := a.searchQuery(ctx, llm, turn.text)
-		rewritten := a.rewriteQuery(ctx, llm, turn.text, searchQuery)
+		searchQuery := a.searchQuery(ctx, llm, turn.text, task.Goal)
+		rewritten := a.rewriteQuery(ctx, llm, turn.text, searchQuery, task.Goal)
 		vec, err := manual.QueryVector(ctx, rewritten)
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmp := a.answerCited(ctx, llm, turn.text, searchQuery, rewritten, vec, task, a.dialogContext())
+		cmp := a.answerCited(ctx, llm, turn.text, searchQuery, rewritten, vec, vec, task, a.dialogContext())
 		reply := formatCompareReply(cmp)
 		if _, err := layers.AppendShortTerm(30,
 			deepseek.Message{Role: "user", Content: turn.text},

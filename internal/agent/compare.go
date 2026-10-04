@@ -40,6 +40,7 @@ type ChunkCompare struct {
 	KBefore     int              `json:"k_before,omitempty"`
 	KAfter      int              `json:"k_after,omitempty"`
 	Threshold   float64          `json:"threshold,omitempty"`
+	Fallback    bool             `json:"fallback,omitempty"`
 	MarkLabel   string           `json:"mark_label,omitempty"`
 	Fixed       SideAnswer       `json:"fixed"`
 	Struct      SideAnswer       `json:"struct"`
@@ -70,8 +71,8 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 	}
 
 	task := a.rememberTask(ctx, b.llm, req.Message)
-	searchQuery := a.searchQuery(ctx, b.llm, req.Message)
-	rewritten := a.rewriteQuery(ctx, b.llm, req.Message, searchQuery)
+	searchQuery := a.searchQuery(ctx, b.llm, req.Message, task.Goal)
+	rewritten := a.rewriteQuery(ctx, b.llm, req.Message, searchQuery, task.Goal)
 	rawVec, err := a.manual.QueryVector(ctx, searchQuery)
 	if err != nil {
 		return Result{Provider: providerID, Model: b.model}, fmt.Errorf("agent %q: вектор вопроса: %w", a.name, err)
@@ -82,10 +83,8 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 		rewritten = searchQuery
 	}
 	start := time.Now()
-	cmp := a.answerCited(ctx, b.llm, req.Message, searchQuery, rewritten, reVec, task, a.dialogContext())
+	cmp := a.answerCited(ctx, b.llm, req.Message, searchQuery, rewritten, rawVec, reVec, task, a.dialogContext())
 	cmp.Task = &task
-	cmp.Controls = controlRows(day24Baseline())
-	cmp.MarkLabel = "смысл совпал"
 	duration := time.Since(start).Milliseconds()
 	reply := formatCompareReply(cmp)
 	if cmp.Fixed.Error != "" && cmp.Struct.Error != "" {
@@ -99,7 +98,7 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 	}
 
 	if a.layers != nil {
-		if _, saveErr := a.layers.AppendShortTerm(a.memoryPolicy.STMWindowN,
+		if _, saveErr := a.layers.AppendShortTerm(0,
 			deepseek.Message{Role: "user", Content: req.Message},
 			deepseek.Message{Role: "assistant", Content: reply},
 		); saveErr != nil {
@@ -115,14 +114,14 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 	}, nil
 }
 
-func (a *Agent) searchQuery(ctx context.Context, llm LLM, query string) string {
+func (a *Agent) searchQuery(ctx context.Context, llm LLM, query, goal string) string {
 	query = strings.TrimSpace(query)
 	if query == "" || !hasCyrillic(query) {
 		return query
 	}
 	chat, err := llm.Chat(ctx, []deepseek.Message{
-		{Role: "system", Content: "Переведи кулинарный запрос на английский. Ответь одной поисковой фразой, без кавычек и пояснений."},
-		{Role: "user", Content: query},
+		{Role: "system", Content: "Переведи текущую реплику на английский одной поисковой фразой из нескольких слов, без кавычек. Не отвечай одним словом. Если это короткое уточнение без нового блюда и цель задана, включи цель. Если пользователь называет другое блюдо или другую тему, переводи только её и не добавляй старую цель."},
+		{Role: "user", Content: "Цель: " + emptyDash(goal) + "\nРеплика: " + query},
 	})
 	if err != nil {
 		return query
@@ -134,10 +133,10 @@ func (a *Agent) searchQuery(ctx context.Context, llm LLM, query string) string {
 	return line
 }
 
-func (a *Agent) rewriteQuery(ctx context.Context, llm LLM, query, fallback string) string {
+func (a *Agent) rewriteQuery(ctx context.Context, llm LLM, query, fallback, goal string) string {
 	chat, err := llm.Chat(ctx, []deepseek.Message{
-		{Role: "system", Content: "Сожми кулинарный запрос до английского названия блюда, 2–6 слов, как заголовок рецепта. Без кавычек и пояснений."},
-		{Role: "user", Content: query},
+		{Role: "system", Content: "Сожми текущую реплику до английского названия блюда, 2–6 слов, как заголовок рецепта. Без кавычек. Если пользователь просит другое блюдо, назови его, а не прежнюю цель. Если это уточнение без нового блюда, можно опереться на цель."},
+		{Role: "user", Content: "Цель: " + emptyDash(goal) + "\nРеплика: " + query},
 	})
 	if err != nil {
 		return fallback
@@ -198,9 +197,19 @@ func (a *Agent) answerFiltered(ctx context.Context, llm LLM, query, searchQuery 
 	}
 }
 
-func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, rewritten string, reVec []float32, task TaskView, history string) ChunkCompare {
+func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, rewritten string, rawVec, reVec []float32, task TaskView, history string) ChunkCompare {
 	wide := a.manual.Matches(reVec, index.RecallK)
 	filtered := index.Filter(index.Rerank(wide, rewritten), index.MinScore, index.AnswerK)
+	fellBack := false
+	if len(filtered) == 0 && searchQuery != rewritten && len(rawVec) > 0 {
+		rawWide := a.manual.Matches(rawVec, index.RecallK)
+		rawKept := index.Filter(index.Rerank(rawWide, searchQuery), index.MinScore, index.AnswerK)
+		if len(rawKept) > 0 {
+			wide = rawWide
+			filtered = rawKept
+			fellBack = true
+		}
+	}
 	cmp := ChunkCompare{
 		Query:       query,
 		SearchQuery: searchQuery,
@@ -208,25 +217,27 @@ func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, re
 		KBefore:     len(wide),
 		KAfter:      len(filtered),
 		Threshold:   index.MinScore,
+		Fallback:    fellBack,
 		Report:      a.report,
 		Fixed:       SideAnswer{Label: "источники"},
 		Struct:      SideAnswer{Label: "цитаты"},
 	}
 	if len(filtered) == 0 {
-		if taskHasContent(task) {
-			cmp.Fixed.Reply = recallTask(task)
-			cmp.Struct.Reply = recallTask(task)
-			return cmp
+		reply, errText := completeOutside(ctx, llm, query, taskPrompt(task, history))
+		cite := outsideCitation()
+		if isOffTopicReply(reply) {
+			cite = offTopicCitation()
 		}
-		cmp.Unknown = true
-		cmp.Fixed.Reply = unknownReply
-		cmp.Struct.Reply = unknownReply
+		cmp.Citations = []index.Citation{cite}
+		cmp.Fixed.Reply = stripReplyChrome(reply)
+		cmp.Fixed.Error = errText
+		cmp.Struct.Reply = quoteBlock(cmp.Citations)
 		return cmp
 	}
 	reply, errText := completeCited(ctx, llm, filtered, query, taskPrompt(task, history))
 	cites := index.Citations(filtered)
 	cmp.Citations = cites
-	cmp.Fixed.Reply = reply
+	cmp.Fixed.Reply = stripReplyChrome(reply)
 	cmp.Fixed.Error = errText
 	cmp.Fixed.Hits = filtered
 	cmp.Struct.Reply = quoteBlock(cites)
@@ -234,7 +245,45 @@ func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, re
 	return cmp
 }
 
-const citedPrompt = "Ты кулинарный помощник. Отвечай по-русски и коротко. Числа, продукты и шаги бери только из цитат ниже. Если в цитатах этого нет, так и скажи и ничего не додумывай."
+const citedPrompt = "Ты кулинарный помощник. Отвечай по-русски, коротко, как следующая реплика диалога. Не пиши заголовки «Ответ» и «Источники». Если пользователь меняет цель, прими новую и не удерживай старую. Числа из книги бери только из цитат ниже. Если цитаты не отвечают на вопрос, но вопрос про еду, ответь из общих знаний и прямо напиши, что это не из книги. Если вопрос не про еду и не меняет цель, скажи, что это не по теме разговора."
+
+const outsidePrompt = "В книге достаточно близкого фрагмента нет. Ответь по-русски, коротко. Если вопрос про еду и продолжает разговор, ответь из общих знаний и прямо напиши, что это не из книги. Если вопрос не про еду и не меняет цель, ответь только: это не по теме разговора. Если пользователь меняет цель, прими новую. Не придумывай цитату из поваренной книги."
+
+func outsideCitation() index.Citation {
+	return index.Citation{
+		Source:  "не из книги",
+		Section: "общий ответ",
+		ChunkID: "вне книги",
+		Quote:   "В книге фрагмент с оценкой 0.75 и выше не найден. Ответ дан не по поваренной книге.",
+	}
+}
+
+func isOffTopicReply(reply string) bool {
+	reply = strings.ToLower(strings.TrimSpace(reply))
+	return strings.HasPrefix(reply, "это не по теме") || strings.HasPrefix(reply, "не по теме")
+}
+
+func offTopicCitation() index.Citation {
+	return index.Citation{
+		Source:  "не по теме",
+		Section: "вне диалога",
+		ChunkID: "не по теме",
+		Quote:   "Вопрос не про еду и не меняет цель разговора.",
+	}
+}
+
+func completeOutside(ctx context.Context, llm LLM, query, contextNote string) (string, string) {
+	messages := []deepseek.Message{{Role: "system", Content: outsidePrompt}}
+	if strings.TrimSpace(contextNote) != "" {
+		messages = append(messages, deepseek.Message{Role: "system", Content: contextNote})
+	}
+	messages = append(messages, deepseek.Message{Role: "user", Content: query})
+	chat, err := llm.Chat(ctx, messages)
+	if err != nil {
+		return "", err.Error()
+	}
+	return strings.TrimSpace(chat.Reply), ""
+}
 
 func quoteBlock(cites []index.Citation) string {
 	var b strings.Builder
@@ -311,9 +360,35 @@ func formatCompareReply(cmp ChunkCompare) string {
 	if cmp.Unknown {
 		return unknownReply
 	}
-	answer := cmp.Fixed.Reply
+	answer := stripReplyChrome(cmp.Fixed.Reply)
 	if answer == "" {
-		answer = cmp.Fixed.Error
+		answer = strings.TrimSpace(cmp.Fixed.Error)
 	}
-	return "Ответ\n" + answer + "\n\nИсточники и цитаты\n" + cmp.Struct.Reply
+	line := sourceLine(cmp.Citations)
+	if line == "" {
+		return answer
+	}
+	return answer + "\n\nИсточники: " + line
+}
+
+func stripReplyChrome(s string) string {
+	s = strings.TrimSpace(s)
+	for strings.HasPrefix(s, "Ответ\n") || strings.HasPrefix(s, "Ответ ") {
+		s = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(s, "Ответ\n"), "Ответ "))
+	}
+	if i := strings.Index(s, "\nИсточники и цитаты"); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
+func sourceLine(cites []index.Citation) string {
+	if len(cites) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(cites))
+	for _, c := range cites {
+		parts = append(parts, c.Section+" · "+c.ChunkID)
+	}
+	return strings.Join(parts, "; ")
 }

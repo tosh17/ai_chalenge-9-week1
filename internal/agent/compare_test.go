@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -42,18 +41,12 @@ func TestDay24BaselineHasSourcesAndQuotes(t *testing.T) {
 	}
 }
 
-type failLLM struct{}
-
-func (failLLM) Chat(context.Context, []deepseek.Message) (deepseek.ChatResult, error) {
-	return deepseek.ChatResult{}, fmt.Errorf("модель не должна вызываться")
-}
-
-func TestAnswerCitedRefusesWeakContext(t *testing.T) {
+func TestAnswerCitedUsesOutsideSourceWhenBookMisses(t *testing.T) {
 	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
 		{ChunkID: "s1", Section: "Boiled Coffee", Text: "1 cup coffee", Embedding: []float32{1, 0}},
 	}))
-	cmp := a.answerCited(context.Background(), failLLM{}, "масло в двигателе", "oil", "engine oil", []float32{0, 1}, TaskView{}, "")
-	if !cmp.Unknown || !strings.HasPrefix(cmp.Fixed.Reply, "Не знаю") || len(cmp.Citations) != 0 {
+	cmp := a.answerCited(context.Background(), echoSideLLM{}, "масло в двигателе", "oil", "engine oil", []float32{0, 1}, []float32{0, 1}, TaskView{}, "")
+	if cmp.Unknown || len(cmp.Citations) != 1 || cmp.Citations[0].Source != "не из книги" || !strings.Contains(cmp.Fixed.Reply, "не из книги") {
 		t.Fatalf("%+v", cmp)
 	}
 }
@@ -66,8 +59,8 @@ func TestAnswerCitedRecallsTaskWithoutBook(t *testing.T) {
 	a := New("cite").WithLayers(layers).WithManual(index.NewMemorySearcher([]index.Chunk{
 		{ChunkID: "s1", Section: "Boiled Coffee", Text: "1 cup coffee", Embedding: []float32{1, 0}},
 	}))
-	cmp := a.answerCited(context.Background(), failLLM{}, "напомни цель", "goal", "remind the goal", []float32{0, 1}, TaskView{Goal: "завтрак: какао", Constraints: []string{"без яиц"}}, "")
-	if cmp.Unknown || !strings.Contains(cmp.Fixed.Reply, "какао") || !strings.Contains(cmp.Fixed.Reply, "без яиц") {
+	cmp := a.answerCited(context.Background(), echoSideLLM{}, "напомни цель", "goal", "remind the goal", []float32{0, 1}, []float32{0, 1}, TaskView{Goal: "завтрак: какао", Constraints: []string{"без яиц"}}, "")
+	if cmp.Unknown || cmp.Citations[0].Source != "не из книги" || !strings.Contains(cmp.Fixed.Reply, "какао") || !strings.Contains(cmp.Fixed.Reply, "без яиц") {
 		t.Fatalf("%+v", cmp.Fixed.Reply)
 	}
 }
@@ -76,7 +69,7 @@ func TestAnswerCitedAttachesSourceAndQuote(t *testing.T) {
 	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
 		{ChunkID: "s1", Section: "Boiled Coffee", Text: "Boil 3 minutes.", Embedding: []float32{1, 0}},
 	}))
-	cmp := a.answerCited(context.Background(), echoSideLLM{}, "кофе", "coffee", "boiled coffee", []float32{1, 0}, TaskView{Goal: "кофе"}, "user: как сварить")
+	cmp := a.answerCited(context.Background(), echoSideLLM{}, "кофе", "coffee", "boiled coffee", []float32{1, 0}, []float32{1, 0}, TaskView{Goal: "кофе"}, "user: как сварить")
 	if cmp.Unknown || len(cmp.Citations) != 1 {
 		t.Fatalf("%+v", cmp)
 	}
@@ -104,5 +97,16 @@ func TestAnswerBothUsesDifferentChunks(t *testing.T) {
 	}
 	if !strings.Contains(cmp.Struct.Reply, "ГЛАВА") || cmp.KBefore != 1 || cmp.KAfter != 1 {
 		t.Fatalf("с фильтром: %s before=%d after=%d", cmp.Struct.Reply, cmp.KBefore, cmp.KAfter)
+	}
+}
+
+func TestFormatCompareReplyIsDialogue(t *testing.T) {
+	got := formatCompareReply(ChunkCompare{
+		Fixed:     SideAnswer{Reply: "Ответ\nК какао подойдёт кекс."},
+		Citations: []index.Citation{{Section: "Cocoanut Cream Candy", ChunkID: "struct:1", Quote: "1½ cups sugar"}},
+		Struct:    SideAnswer{Reply: "huge quote"},
+	})
+	if strings.Contains(got, "1½ cups") || strings.Contains(got, "Источники и цитаты") || !strings.Contains(got, "К какао подойдёт кекс.") || !strings.Contains(got, "Cocoanut Cream Candy · struct:1") {
+		t.Fatal(got)
 	}
 }

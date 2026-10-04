@@ -37,7 +37,7 @@ func (a *Agent) rememberTask(ctx context.Context, llm LLM, message string) TaskV
 	}
 	next := prev
 	chat, err := llm.Chat(ctx, []deepseek.Message{
-		{Role: "system", Content: "Обнови память кулинарного диалога. Ответь только JSON {\"goal\":\"\",\"clarified\":[],\"constraints\":[]}. goal — цель диалога; если реплика её не меняет, повтори прежнюю дословно. clarified — новые уточнения пользователя. constraints — новые запреты и обязательные условия. Не выдумывай. Пустые массивы, если нового нет."},
+		{Role: "system", Content: "Обнови память кулинарного диалога. Ответь только JSON {\"goal\":\"\",\"clarified\":[],\"constraints\":[]}. Если пользователь просит другое блюдо или явно меняет цель, goal — новая цель. Иначе повтори прежнюю дословно. clarified — новые уточнения. constraints — только новые запреты продуктов и условия готовки, без фраз вроде «не меняй цель». Не выдумывай. Пустые массивы, если нового нет."},
 		{Role: "user", Content: "Прежняя цель: " + emptyDash(prev.Goal) + "\nУже уточнено: " + joinOrDash(prev.Clarified) + "\nОграничения: " + joinOrDash(prev.Constraints) + "\nРеплика: " + message},
 	})
 	if err == nil {
@@ -102,9 +102,6 @@ func (a *Agent) dialogContext() string {
 		return ""
 	}
 	msgs := a.layers.ShortTerm()
-	if len(msgs) > 8 {
-		msgs = msgs[len(msgs)-8:]
-	}
 	var b strings.Builder
 	for _, m := range msgs {
 		text := strings.TrimSpace(m.Content)
@@ -142,16 +139,8 @@ func taskPrompt(task TaskView, history string) string {
 		b.WriteString("\n\nНедавний диалог:\n")
 		b.WriteString(history)
 	}
-	b.WriteString("\n\nЧисла и шаги бери только из текущих цитат. Ограничения не отменяй.")
+	b.WriteString("\n\nЕсли пользователь меняет цель, прими новую и отвечай по ней. Не пиши, что оставляешь прежнюю цель. Если цитаты не отвечают на вопрос, но вопрос про еду, ответь из общих знаний и напиши, что это не из книги. Если вопрос не про еду и не меняет цель, скажи, что это не по теме. Запреты продуктов не отменяй, пока пользователь сам их не снимет.")
 	return b.String()
-}
-
-func recallTask(task TaskView) string {
-	return "Цель: " + emptyDash(task.Goal) + "\nУже уточнено: " + joinOrDash(task.Clarified) + "\nОграничения: " + joinOrDash(task.Constraints) + "\nПо книге на эту реплику фрагмента нет. Спросите блюдо — отвечу с цитатой."
-}
-
-func taskHasContent(task TaskView) bool {
-	return strings.TrimSpace(task.Goal) != "" || len(task.Clarified) > 0 || len(task.Constraints) > 0
 }
 
 func emptyDash(s string) string {

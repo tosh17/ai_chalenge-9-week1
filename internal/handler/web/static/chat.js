@@ -727,7 +727,6 @@ function applyPolicyToForm(p) {
 function formatSTM(messages) {
   if (!Array.isArray(messages) || !messages.length) return "диалог пуст";
   return messages
-    .slice(-8)
     .map((m) => `${m.role}: ${m.content}`)
     .join("\n");
 }
@@ -766,7 +765,7 @@ function renderMemory(mem) {
   if (!mem) return;
   const stm = mem.stm_preview || mem.short_term || [];
   const count = mem.short_term_count ?? stm.length;
-  stmMeta.textContent = `${count} сообщ. · окно ${mem.policy?.stm_window_n || currentPolicy.stm_window_n || 8}`;
+  stmMeta.textContent = `${count} сообщ.`;
   stmPre.textContent = formatSTM(stm);
   const wm = mem.working || {};
   const t = wm.task || {};
@@ -1322,6 +1321,26 @@ async function clearLayer(layer, reloadChat) {
   }
 }
 
+function asDialogue(content) {
+  const text = String(content || "").trim();
+  const chunks = text.split(/\nИсточники и цитаты\n/);
+  let answer = chunks[0].replace(/^(Ответ\n)+/, "").trim();
+  const sources = [];
+  const seen = new Set();
+  const rest = chunks.slice(1).join("\n");
+  const re = /^\[(\d+)\]\s+(.+)$/gm;
+  let match;
+  while ((match = re.exec(rest))) {
+    const head = match[2].trim();
+    if (!seen.has(head)) {
+      seen.add(head);
+      sources.push(head);
+    }
+  }
+  if (!sources.length) return answer || text;
+  return `${answer}\n\nИсточники: ${sources.join("; ")}`;
+}
+
 async function loadHistory() {
   try {
     const res = await fetch("/api/history");
@@ -1330,7 +1349,7 @@ async function loadHistory() {
     const messages = Array.isArray(data.messages) ? data.messages : [];
     history = messages
       .filter((m) => m && (m.role === "user" || m.role === "assistant") && m.content)
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({ role: m.role, content: m.role === "assistant" ? asDialogue(m.content) : m.content }));
     updateTokenMeter(data.tokens, data.session);
     if (data.memory) renderMemory(data.memory);
     if (data.memory_policy) applyPolicyToForm(data.memory_policy);
