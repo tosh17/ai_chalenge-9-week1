@@ -8,6 +8,7 @@ import (
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 	"github.com/tosh17/deepseek-service/internal/index"
+	"github.com/tosh17/deepseek-service/internal/memory"
 )
 
 type echoSideLLM struct{}
@@ -51,9 +52,23 @@ func TestAnswerCitedRefusesWeakContext(t *testing.T) {
 	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
 		{ChunkID: "s1", Section: "Boiled Coffee", Text: "1 cup coffee", Embedding: []float32{1, 0}},
 	}))
-	cmp := a.answerCited(context.Background(), failLLM{}, "масло в двигателе", "oil", "engine oil", []float32{0, 1})
+	cmp := a.answerCited(context.Background(), failLLM{}, "масло в двигателе", "oil", "engine oil", []float32{0, 1}, TaskView{}, "")
 	if !cmp.Unknown || !strings.HasPrefix(cmp.Fixed.Reply, "Не знаю") || len(cmp.Citations) != 0 {
 		t.Fatalf("%+v", cmp)
+	}
+}
+
+func TestAnswerCitedRecallsTaskWithoutBook(t *testing.T) {
+	layers, err := memory.OpenLayers(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New("cite").WithLayers(layers).WithManual(index.NewMemorySearcher([]index.Chunk{
+		{ChunkID: "s1", Section: "Boiled Coffee", Text: "1 cup coffee", Embedding: []float32{1, 0}},
+	}))
+	cmp := a.answerCited(context.Background(), failLLM{}, "напомни цель", "goal", "remind the goal", []float32{0, 1}, TaskView{Goal: "завтрак: какао", Constraints: []string{"без яиц"}}, "")
+	if cmp.Unknown || !strings.Contains(cmp.Fixed.Reply, "какао") || !strings.Contains(cmp.Fixed.Reply, "без яиц") {
+		t.Fatalf("%+v", cmp.Fixed.Reply)
 	}
 }
 
@@ -61,7 +76,7 @@ func TestAnswerCitedAttachesSourceAndQuote(t *testing.T) {
 	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
 		{ChunkID: "s1", Section: "Boiled Coffee", Text: "Boil 3 minutes.", Embedding: []float32{1, 0}},
 	}))
-	cmp := a.answerCited(context.Background(), echoSideLLM{}, "кофе", "coffee", "boiled coffee", []float32{1, 0})
+	cmp := a.answerCited(context.Background(), echoSideLLM{}, "кофе", "coffee", "boiled coffee", []float32{1, 0}, TaskView{Goal: "кофе"}, "user: как сварить")
 	if cmp.Unknown || len(cmp.Citations) != 1 {
 		t.Fatalf("%+v", cmp)
 	}

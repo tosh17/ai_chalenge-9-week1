@@ -47,6 +47,7 @@ type ChunkCompare struct {
 	Controls    []ControlRow     `json:"controls,omitempty"`
 	Unknown     bool             `json:"unknown,omitempty"`
 	Citations   []index.Citation `json:"citations,omitempty"`
+	Task        *TaskView        `json:"task,omitempty"`
 }
 
 const unknownReply = "Не знаю. В найденных фрагментах нет достаточно близкого рецепта. Уточните блюдо или способ готовки."
@@ -68,6 +69,7 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("agent %q: unknown provider %q", a.name, providerID)
 	}
 
+	task := a.rememberTask(ctx, b.llm, req.Message)
 	searchQuery := a.searchQuery(ctx, b.llm, req.Message)
 	rewritten := a.rewriteQuery(ctx, b.llm, req.Message, searchQuery)
 	rawVec, err := a.manual.QueryVector(ctx, searchQuery)
@@ -80,7 +82,8 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 		rewritten = searchQuery
 	}
 	start := time.Now()
-	cmp := a.answerCited(ctx, b.llm, req.Message, searchQuery, rewritten, reVec)
+	cmp := a.answerCited(ctx, b.llm, req.Message, searchQuery, rewritten, reVec, task, a.dialogContext())
+	cmp.Task = &task
 	cmp.Controls = controlRows(day24Baseline())
 	cmp.MarkLabel = "смысл совпал"
 	duration := time.Since(start).Milliseconds()
@@ -195,7 +198,7 @@ func (a *Agent) answerFiltered(ctx context.Context, llm LLM, query, searchQuery 
 	}
 }
 
-func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, rewritten string, reVec []float32) ChunkCompare {
+func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, rewritten string, reVec []float32, task TaskView, history string) ChunkCompare {
 	wide := a.manual.Matches(reVec, index.RecallK)
 	filtered := index.Filter(index.Rerank(wide, rewritten), index.MinScore, index.AnswerK)
 	cmp := ChunkCompare{
@@ -210,12 +213,17 @@ func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, re
 		Struct:      SideAnswer{Label: "цитаты"},
 	}
 	if len(filtered) == 0 {
+		if taskHasContent(task) {
+			cmp.Fixed.Reply = recallTask(task)
+			cmp.Struct.Reply = recallTask(task)
+			return cmp
+		}
 		cmp.Unknown = true
 		cmp.Fixed.Reply = unknownReply
 		cmp.Struct.Reply = unknownReply
 		return cmp
 	}
-	reply, errText := completeCited(ctx, llm, filtered, query)
+	reply, errText := completeCited(ctx, llm, filtered, query, taskPrompt(task, history))
 	cites := index.Citations(filtered)
 	cmp.Citations = cites
 	cmp.Fixed.Reply = reply
@@ -267,12 +275,15 @@ func controlRows(scored map[string]ControlRow) []ControlRow {
 	return out
 }
 
-func completeCited(ctx context.Context, llm LLM, hits []index.Match, query string) (string, string) {
+func completeCited(ctx context.Context, llm LLM, hits []index.Match, query, contextNote string) (string, string) {
 	messages := []deepseek.Message{
 		{Role: "system", Content: citedPrompt},
 		{Role: "system", Content: quoteBlock(index.Citations(hits))},
-		{Role: "user", Content: query},
 	}
+	if strings.TrimSpace(contextNote) != "" {
+		messages = append(messages, deepseek.Message{Role: "system", Content: contextNote})
+	}
+	messages = append(messages, deepseek.Message{Role: "user", Content: query})
 	chat, err := llm.Chat(ctx, messages)
 	if err != nil {
 		return "", err.Error()

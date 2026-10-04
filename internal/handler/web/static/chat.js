@@ -122,6 +122,12 @@ function hitCell(hit) {
   return `<div class="compare__hit"><span>${escapeHTML(scoreText)} ${escapeHTML(hit.section || "")}</span><p>${escapeHTML(hit.preview || "")}</p></div>`;
 }
 
+function taskCard(task) {
+  if (!task || (!task.goal && !(task.clarified || []).length && !(task.constraints || []).length)) return "";
+  const line = (label, value) => `<p class="compare__source">${label}: ${escapeHTML(value || "—")}</p>`;
+  return line("Цель", task.goal) + line("Уже уточнено", (task.clarified || []).join("; ")) + line("Ограничения", (task.constraints || []).join("; "));
+}
+
 function controlTable(compare, leftTitle, rightTitle) {
   const controls = Array.isArray(compare.controls) ? compare.controls : [];
   if (!controls.length) return "";
@@ -164,6 +170,7 @@ function createCited(compare, meta = {}) {
         ${compare.search_query ? `<p class="compare__source">Поиск по книге: ${escapeHTML(compare.search_query)}</p>` : ""}
         ${compare.rewrite ? `<p class="compare__source">Перефраз: ${escapeHTML(compare.rewrite)}. До фильтра ${compare.k_before}, порог ${compare.threshold}, после ${compare.k_after}.</p>` : ""}
         ${gate}
+        ${taskCard(compare.task)}
         <h3>Ответ</h3>
         <p>${escapeHTML(answer)}</p>
         ${quotes ? `<h3>Источники и цитаты</h3>${quotes}` : ""}
