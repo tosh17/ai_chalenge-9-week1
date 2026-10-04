@@ -122,7 +122,65 @@ function hitCell(hit) {
   return `<div class="compare__hit"><span>${escapeHTML(scoreText)} ${escapeHTML(hit.section || "")}</span><p>${escapeHTML(hit.preview || "")}</p></div>`;
 }
 
+function controlTable(compare, leftTitle, rightTitle) {
+  const controls = Array.isArray(compare.controls) ? compare.controls : [];
+  if (!controls.length) return "";
+  const markLabel = compare.mark_label || "источник найден";
+  let controlRows = "";
+  for (const row of controls) {
+    const mark = (ok, noise) => `${ok ? "да" : "нет"}${Number.isFinite(noise) ? `, лишних ${noise}` : ""}`;
+    controlRows += `<tr><td>${escapeHTML(row.question || "")}</td><td>${escapeHTML(row.expect || "")}</td><td>${escapeHTML(row.sources || "")}</td><td>${mark(row.plain_hit, row.plain_noise)}</td><td>${mark(row.rag_hit, row.rag_noise)}</td><td>${row.source_hit ? "да" : "нет"}</td></tr>`;
+  }
+  return `
+        <p class="compare__source">10 контрольных вопросов</p>
+        <table class="compare__table">
+          <tr><th>вопрос</th><th>ожидание</th><th>источник</th><th>${escapeHTML(leftTitle)}</th><th>${escapeHTML(rightTitle)}</th><th>${escapeHTML(markLabel)}</th></tr>
+          ${controlRows}
+        </table>`;
+}
+
+function createCited(compare, meta = {}) {
+  hideWelcome();
+  const el = document.createElement("div");
+  el.className = "message message--assistant message--compare";
+  const timeLabel = meta.durationMs != null
+    ? `<span class="message__time">${escapeHTML(formatDuration(meta.durationMs))}</span>`
+    : "";
+  const answer = compare.fixed?.reply || compare.fixed?.error || "";
+  const cites = Array.isArray(compare.citations) ? compare.citations : [];
+  let quotes = "";
+  for (const c of cites) {
+    quotes += `<div class="compare__hit"><span>${escapeHTML(c.source || "")} · ${escapeHTML(c.section || "")} · ${escapeHTML(c.chunk_id || "")}</span><p>${escapeHTML(c.quote || "")}</p></div>`;
+  }
+  const gate = compare.unknown
+    ? `<p class="compare__source">Релевантность ниже порога ${compare.threshold}. Ответ без цитат запрещён.</p>`
+    : `<p class="compare__source">Источники и цитаты: ${cites.length}</p>`;
+  const leftTitle = compare.fixed?.label || "источники";
+  const rightTitle = compare.struct?.label || "цитаты";
+  el.innerHTML = `
+    <div class="message__avatar">AI</div>
+    <div class="message__body">
+      <div class="message__bubble">
+        ${compare.search_query ? `<p class="compare__source">Поиск по книге: ${escapeHTML(compare.search_query)}</p>` : ""}
+        ${compare.rewrite ? `<p class="compare__source">Перефраз: ${escapeHTML(compare.rewrite)}. До фильтра ${compare.k_before}, порог ${compare.threshold}, после ${compare.k_after}.</p>` : ""}
+        ${gate}
+        <h3>Ответ</h3>
+        <p>${escapeHTML(answer)}</p>
+        ${quotes ? `<h3>Источники и цитаты</h3>${quotes}` : ""}
+        ${controlTable(compare, leftTitle, rightTitle)}
+      </div>
+      ${timeLabel}
+    </div>
+  `;
+  chatEl.appendChild(el);
+  scrollToBottom();
+  return el;
+}
+
 function createCompare(compare, meta = {}) {
+  if (compare.unknown || (Array.isArray(compare.citations) && compare.citations.length)) {
+    return createCited(compare, meta);
+  }
   hideWelcome();
   const el = document.createElement("div");
   el.className = "message message--assistant message--compare";
@@ -140,22 +198,10 @@ function createCompare(compare, meta = {}) {
   const structText = compare.struct?.reply || compare.struct?.error || "";
   const leftTitle = compare.fixed?.label || "Без RAG";
   const rightTitle = compare.struct?.label || "С RAG";
-  const controls = Array.isArray(compare.controls) ? compare.controls : [];
-  let controlRows = "";
-  for (const row of controls) {
-    const mark = (ok, noise) => `${ok ? "да" : "нет"}${Number.isFinite(noise) ? `, лишних ${noise}` : ""}`;
-    controlRows += `<tr><td>${escapeHTML(row.question || "")}</td><td>${escapeHTML(row.expect || "")}</td><td>${escapeHTML(row.sources || "")}</td><td>${mark(row.plain_hit, row.plain_noise)}</td><td>${mark(row.rag_hit, row.rag_noise)}</td><td>${row.source_hit ? "да" : "нет"}</td></tr>`;
-  }
-  const markLabel = compare.mark_label || "источник найден";
   const filterNote = compare.k_before
     ? `<p class="compare__source">До фильтра ${compare.k_before}, порог ${compare.threshold}, после ${compare.k_after}${compare.rewrite ? `. Перефраз: ${escapeHTML(compare.rewrite)}` : ""}</p>`
     : "";
-  const controlsHTML = controls.length ? `
-        <p class="compare__source">10 контрольных вопросов</p>
-        <table class="compare__table">
-          <tr><th>вопрос</th><th>ожидание</th><th>источник</th><th>${escapeHTML(leftTitle)}</th><th>${escapeHTML(rightTitle)}</th><th>${escapeHTML(markLabel)}</th></tr>
-          ${controlRows}
-        </table>` : "";
+  const controlsHTML = controlTable(compare, leftTitle, rightTitle);
   el.innerHTML = `
     <div class="message__avatar">AI</div>
     <div class="message__body">
@@ -1481,7 +1527,7 @@ async function sendMessage(text, opts = {}) {
       return;
     }
     renderRouteEvents(data.route_events);
-    if (data.compare && data.compare.fixed && data.compare.struct) {
+    if (data.compare && (data.compare.unknown || data.compare.citations || (data.compare.fixed && data.compare.struct))) {
       createCompare(data.compare, { durationMs: data.duration_ms ?? durationMs });
       updateTokenMeter(data.tokens, data.session);
       if (data.memory) renderMemory(data.memory);

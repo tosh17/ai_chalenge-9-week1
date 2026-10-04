@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -21,21 +22,55 @@ func (echoSideLLM) Chat(_ context.Context, messages []deepseek.Message) (deepsee
 	return deepseek.ChatResult{Reply: b.String()}, nil
 }
 
-func TestDay23BaselineHasTenRows(t *testing.T) {
-	rows := controlRows(day23Baseline())
+func TestDay24BaselineHasSourcesAndQuotes(t *testing.T) {
+	rows := controlRows(day24Baseline())
 	if len(rows) != 10 {
 		t.Fatalf("контролей %d", len(rows))
 	}
-	plainNoise, ragNoise := 0, 0
+	miss := 0
 	for _, row := range rows {
-		if !row.PlainHit || !row.RagHit || !row.SourceHit || row.Expect == "" || row.Sources == "" {
+		if !row.PlainHit || !row.RagHit || row.Expect == "" || row.Sources == "" {
 			t.Fatalf("%+v", row)
 		}
-		plainNoise += row.PlainNoise
-		ragNoise += row.RagNoise
+		if !row.SourceHit {
+			miss++
+		}
 	}
-	if plainNoise != 29 || ragNoise != 15 {
-		t.Fatalf("лишних разделов %d и %d", plainNoise, ragNoise)
+	if miss != 1 {
+		t.Fatalf("смысл не совпал у %d вопросов", miss)
+	}
+}
+
+type failLLM struct{}
+
+func (failLLM) Chat(context.Context, []deepseek.Message) (deepseek.ChatResult, error) {
+	return deepseek.ChatResult{}, fmt.Errorf("модель не должна вызываться")
+}
+
+func TestAnswerCitedRefusesWeakContext(t *testing.T) {
+	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
+		{ChunkID: "s1", Section: "Boiled Coffee", Text: "1 cup coffee", Embedding: []float32{1, 0}},
+	}))
+	cmp := a.answerCited(context.Background(), failLLM{}, "масло в двигателе", "oil", "engine oil", []float32{0, 1})
+	if !cmp.Unknown || !strings.HasPrefix(cmp.Fixed.Reply, "Не знаю") || len(cmp.Citations) != 0 {
+		t.Fatalf("%+v", cmp)
+	}
+}
+
+func TestAnswerCitedAttachesSourceAndQuote(t *testing.T) {
+	a := New("cite").WithManual(index.NewMemorySearcher([]index.Chunk{
+		{ChunkID: "s1", Section: "Boiled Coffee", Text: "Boil 3 minutes.", Embedding: []float32{1, 0}},
+	}))
+	cmp := a.answerCited(context.Background(), echoSideLLM{}, "кофе", "coffee", "boiled coffee", []float32{1, 0})
+	if cmp.Unknown || len(cmp.Citations) != 1 {
+		t.Fatalf("%+v", cmp)
+	}
+	c := cmp.Citations[0]
+	if c.Source != index.BookFile || c.ChunkID != "s1" || !strings.Contains(c.Quote, "3 minutes") {
+		t.Fatalf("%+v", c)
+	}
+	if !strings.Contains(cmp.Struct.Reply, "s1") || !strings.Contains(cmp.Fixed.Reply, "3 minutes") {
+		t.Fatalf("reply %q quotes %q", cmp.Fixed.Reply, cmp.Struct.Reply)
 	}
 }
 

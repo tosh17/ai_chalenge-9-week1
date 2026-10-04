@@ -34,18 +34,22 @@ type ControlRow struct {
 
 // ChunkCompare — ответ без фильтра и ответ после порога, реранкинга и перефразирования.
 type ChunkCompare struct {
-	Query       string        `json:"query"`
-	SearchQuery string        `json:"search_query,omitempty"`
-	Rewrite     string        `json:"rewrite,omitempty"`
-	KBefore     int           `json:"k_before,omitempty"`
-	KAfter      int           `json:"k_after,omitempty"`
-	Threshold   float64       `json:"threshold,omitempty"`
-	MarkLabel   string        `json:"mark_label,omitempty"`
-	Fixed       SideAnswer    `json:"fixed"`
-	Struct      SideAnswer    `json:"struct"`
-	Report      *index.Report `json:"report,omitempty"`
-	Controls    []ControlRow  `json:"controls,omitempty"`
+	Query       string           `json:"query"`
+	SearchQuery string           `json:"search_query,omitempty"`
+	Rewrite     string           `json:"rewrite,omitempty"`
+	KBefore     int              `json:"k_before,omitempty"`
+	KAfter      int              `json:"k_after,omitempty"`
+	Threshold   float64          `json:"threshold,omitempty"`
+	MarkLabel   string           `json:"mark_label,omitempty"`
+	Fixed       SideAnswer       `json:"fixed"`
+	Struct      SideAnswer       `json:"struct"`
+	Report      *index.Report    `json:"report,omitempty"`
+	Controls    []ControlRow     `json:"controls,omitempty"`
+	Unknown     bool             `json:"unknown,omitempty"`
+	Citations   []index.Citation `json:"citations,omitempty"`
 }
+
+const unknownReply = "Не знаю. В найденных фрагментах нет достаточно близкого рецепта. Уточните блюдо или способ готовки."
 
 // Compare отвечает по сырому топ-4 и по тому же поиску после перефразирования, реранкинга и порога.
 func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
@@ -76,9 +80,9 @@ func (a *Agent) Compare(ctx context.Context, req Request) (Result, error) {
 		rewritten = searchQuery
 	}
 	start := time.Now()
-	cmp := a.answerFiltered(ctx, b.llm, req.Message, searchQuery, rawVec, rewritten, reVec)
-	cmp.Controls = controlRows(day23Baseline())
-	cmp.MarkLabel = "факты с фильтром"
+	cmp := a.answerCited(ctx, b.llm, req.Message, searchQuery, rewritten, reVec)
+	cmp.Controls = controlRows(day24Baseline())
+	cmp.MarkLabel = "смысл совпал"
 	duration := time.Since(start).Milliseconds()
 	reply := formatCompareReply(cmp)
 	if cmp.Fixed.Error != "" && cmp.Struct.Error != "" {
@@ -191,22 +195,58 @@ func (a *Agent) answerFiltered(ctx context.Context, llm LLM, query, searchQuery 
 	}
 }
 
-func day23Baseline() map[string]ControlRow {
-	hit := func(plainNoise, ragNoise int) ControlRow {
-		return ControlRow{PlainHit: true, RagHit: true, SourceHit: true, PlainNoise: plainNoise, RagNoise: ragNoise}
+func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, rewritten string, reVec []float32) ChunkCompare {
+	wide := a.manual.Matches(reVec, index.RecallK)
+	filtered := index.Filter(index.Rerank(wide, rewritten), index.MinScore, index.AnswerK)
+	cmp := ChunkCompare{
+		Query:       query,
+		SearchQuery: searchQuery,
+		Rewrite:     rewritten,
+		KBefore:     len(wide),
+		KAfter:      len(filtered),
+		Threshold:   index.MinScore,
+		Report:      a.report,
+		Fixed:       SideAnswer{Label: "источники"},
+		Struct:      SideAnswer{Label: "цитаты"},
 	}
-	return map[string]ControlRow{
-		"Как сварить кофе в кофейнике?":     hit(2, 2),
-		"Как сделать фильтрованный кофе?":   hit(3, 1),
-		"Как заварить чай?":                 hit(3, 0),
-		"Как приготовить лимонад?":          hit(3, 1),
-		"Как сварить какао к завтраку?":     hit(3, 1),
-		"Как сделать горячий шоколад?":      hit(3, 2),
-		"Как испечь хлеб на воде?":          hit(3, 3),
-		"Как приготовить голландский соус?": hit(3, 3),
-		"Как сделать мятный джулеп?":        hit(3, 0),
-		"Как приготовить имбирный пунш?":    hit(3, 2),
+	if len(filtered) == 0 {
+		cmp.Unknown = true
+		cmp.Fixed.Reply = unknownReply
+		cmp.Struct.Reply = unknownReply
+		return cmp
 	}
+	reply, errText := completeCited(ctx, llm, filtered, query)
+	cites := index.Citations(filtered)
+	cmp.Citations = cites
+	cmp.Fixed.Reply = reply
+	cmp.Fixed.Error = errText
+	cmp.Fixed.Hits = filtered
+	cmp.Struct.Reply = quoteBlock(cites)
+	cmp.Struct.Hits = filtered
+	return cmp
+}
+
+const citedPrompt = "Ты кулинарный помощник. Отвечай по-русски и коротко. Числа, продукты и шаги бери только из цитат ниже. Если в цитатах этого нет, так и скажи и ничего не додумывай."
+
+func quoteBlock(cites []index.Citation) string {
+	var b strings.Builder
+	for i, c := range cites {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "[%d] %s · %s · %s\n%s", i+1, c.Source, c.Section, c.ChunkID, c.Quote)
+	}
+	return b.String()
+}
+
+func day24Baseline() map[string]ControlRow {
+	row := ControlRow{PlainHit: true, RagHit: true, SourceHit: true}
+	scored := map[string]ControlRow{}
+	for _, c := range index.Controls() {
+		scored[c.Question] = row
+	}
+	scored["Как приготовить голландский соус?"] = ControlRow{PlainHit: true, RagHit: true, SourceHit: false}
+	return scored
 }
 
 func controlRows(scored map[string]ControlRow) []ControlRow {
@@ -227,6 +267,19 @@ func controlRows(scored map[string]ControlRow) []ControlRow {
 	return out
 }
 
+func completeCited(ctx context.Context, llm LLM, hits []index.Match, query string) (string, string) {
+	messages := []deepseek.Message{
+		{Role: "system", Content: citedPrompt},
+		{Role: "system", Content: quoteBlock(index.Citations(hits))},
+		{Role: "user", Content: query},
+	}
+	chat, err := llm.Chat(ctx, messages)
+	if err != nil {
+		return "", err.Error()
+	}
+	return strings.TrimSpace(chat.Reply), ""
+}
+
 func completeSide(ctx context.Context, llm LLM, system string, hits []index.Match, query string) (string, string) {
 	if system == "" {
 		system = "Отвечай только по фрагментам руководства. Если нужного фрагмента нет, так и скажи."
@@ -244,21 +297,12 @@ func completeSide(ctx context.Context, llm LLM, system string, hits []index.Matc
 }
 
 func formatCompareReply(cmp ChunkCompare) string {
-	fixed := cmp.Fixed.Reply
-	if fixed == "" {
-		fixed = cmp.Fixed.Error
+	if cmp.Unknown {
+		return unknownReply
 	}
-	structured := cmp.Struct.Reply
-	if structured == "" {
-		structured = cmp.Struct.Error
+	answer := cmp.Fixed.Reply
+	if answer == "" {
+		answer = cmp.Fixed.Error
 	}
-	left := cmp.Fixed.Label
-	if left == "" {
-		left = "Без фильтра"
-	}
-	right := cmp.Struct.Label
-	if right == "" {
-		right = "С фильтром"
-	}
-	return left + "\n" + fixed + "\n\n" + right + "\n" + structured
+	return "Ответ\n" + answer + "\n\nИсточники и цитаты\n" + cmp.Struct.Reply
 }

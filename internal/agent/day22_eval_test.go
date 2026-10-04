@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,25 +40,35 @@ func TestDay22ControlAnswers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmp := a.answerFiltered(ctx, llm, c.Question, c.Search, vec, c.Search, vec)
-		fmt.Printf("Q %s\n  raw_source=%v filtered_source=%v raw_facts=%v filtered_facts=%v before=%d after=%d\n  raw: %s\n  filtered: %s\n",
+		cmp := a.answerCited(ctx, llm, c.Question, c.Search, c.Search, vec)
+		quotes := quoteBodies(cmp.Citations)
+		fmt.Printf("Q %s\n  unknown=%v sources=%v quotes=%v grounded=%v facts=%v section=%v cites=%d\n  answer: %s\n",
 			c.Question,
-			index.SectionHit(cmp.Fixed.Hits, c.Section),
-			index.SectionHit(cmp.Struct.Hits, c.Section),
+			cmp.Unknown,
+			len(cmp.Citations) > 0 && cmp.Citations[0].ChunkID != "" && cmp.Citations[0].Source != "",
+			strings.TrimSpace(quotes) != "",
+			index.Grounded(cmp.Fixed.Reply, quotes),
 			index.FactsHit(cmp.Fixed.Reply, c.Facts),
-			index.FactsHit(cmp.Struct.Reply, c.Facts),
-			cmp.KBefore,
-			cmp.KAfter,
+			index.SectionHit(cmp.Fixed.Hits, c.Section),
+			len(cmp.Citations),
 			oneLine(cmp.Fixed.Reply),
-			oneLine(cmp.Struct.Reply),
 		)
-		for _, h := range cmp.Fixed.Hits {
-			fmt.Printf("  raw %.3f %s\n", h.Score, h.Section)
-		}
-		for _, h := range cmp.Struct.Hits {
-			fmt.Printf("  flt %.3f %s\n", h.Score, h.Section)
-		}
 	}
+	oil, err := manual.QueryVector(ctx, "how to change engine oil")
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := a.answerCited(ctx, llm, "как заменить масло в двигателе", "engine oil", "how to change engine oil", oil)
+	fmt.Printf("OFF unknown=%v k_after=%d reply=%s\n", off.Unknown, off.KAfter, oneLine(off.Fixed.Reply))
+}
+
+func quoteBodies(cites []index.Citation) string {
+	var b strings.Builder
+	for _, c := range cites {
+		b.WriteString(c.Quote)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func oneLine(s string) string {
