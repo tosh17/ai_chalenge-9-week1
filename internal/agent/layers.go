@@ -360,13 +360,10 @@ func (a *Agent) buildMessagesLayers(userMsg string, policy MemoryPolicy) ([]deep
 	if system == "" {
 		system = "Ты полезный ассистент. Отвечай кратко и по делу на языке пользователя."
 	}
-	out = append(out, deepseek.Message{Role: "system", Content: system})
-
-	if a.manual != nil && strings.TrimSpace(userMsg) != "" {
-		if block, err := a.manual.Context(context.Background(), userMsg); err == nil && block != "" {
-			out = append(out, deepseek.Message{Role: "system", Content: block})
-		}
+	if custom := strings.TrimSpace(a.savedPrompt()); custom != "" {
+		system = custom
 	}
+	out = append(out, deepseek.Message{Role: "system", Content: system})
 
 	if policy.InjectProfile && a.profiles != nil {
 		prof := a.profiles.Active()

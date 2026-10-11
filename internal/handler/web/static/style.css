@@ -1076,15 +1076,18 @@ body {
   }
 }
 
+.day29 h3,
 .day21 h3 {
   margin: 0 0 4px;
   font-size: 0.95rem;
 }
 
+.day29 p,
 .day21 p {
   margin: 0 0 8px;
 }
 
+.day29 table,
 .day21 table {
   width: 100%;
   border-collapse: collapse;
@@ -1092,6 +1095,8 @@ body {
   font-size: 0.78rem;
 }
 
+.day29 th,
+.day29 td,
 .day21 th,
 .day21 td {
   border: 1px solid var(--border);
@@ -1100,11 +1105,13 @@ body {
   vertical-align: top;
 }
 
+.day29__label,
 .day21__label {
   margin: 8px 0 2px;
   font-weight: 700;
 }
 
+.day29__preview,
 .day21__preview {
   margin: 0 0 6px;
   color: var(--text-muted);

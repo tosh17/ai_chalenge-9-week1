@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent</title>
-  <link rel="stylesheet" href="/static/style.css?v=cook5">
+  <link rel="stylesheet" href="/static/style.css?v=cook8">
 </head>
 <body>
   <div class="layout" id="layout">
@@ -15,16 +15,6 @@
         </button>
         <span class="chat-bar__title" id="chatTitle">Чат</span>
         <button type="button" id="clearBtn" class="btn btn--ghost btn--sm chat-bar__new">Новый чат</button>
-        <nav class="phase-track" id="phaseTrack" aria-label="Фазы задачи">
-          <span data-phase="planning">планирование</span>
-          <span class="phase-track__arrow" aria-hidden="true">→</span>
-          <span data-phase="execution">выполнение</span>
-          <span class="phase-track__arrow" aria-hidden="true">→</span>
-          <span data-phase="validation">проверка</span>
-          <span class="phase-track__arrow" aria-hidden="true">→</span>
-          <span data-phase="done">готово</span>
-        </nav>
-        <span class="task-pill" id="taskMeta" hidden>нет задачи</span>
         <div class="token-meter chat-bar__meter" id="tokenMeter" aria-live="polite">
           <div class="token-meter__bar"><span id="tokenBarFill" class="token-meter__fill"></span></div>
           <p class="token-meter__text" id="tokenMeterText"></p>
@@ -34,7 +24,7 @@
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
           <h2>Ассистент</h2>
-          <p>Спросите рецепт. Чат помнит цель и ограничения, а в ответе остаются источники и цитаты.</p>
+          <p>Спросите про еду. Локальная модель отвечает сама, без поиска по книге.</p>
         </div>
       </main>
 
@@ -60,168 +50,38 @@
       <div class="nav__brand">
         <div class="nav__brand-text">
           <strong>Настройки</strong>
-          <span>Профиль и память</span>
+          <span>Локальная модель</span>
         </div>
         <button type="button" id="settingsCloseBtn" class="nav__collapse" title="Закрыть" aria-label="Закрыть настройки">✕</button>
       </div>
 
       <div class="nav__scroll">
-      <section class="nav__block">
-        <h3>Модель</h3>
-        <select id="providerSelect" class="nav__select" aria-label="Провайдер модели">
-          <option value="local">Local-Qwen</option>
-          <option value="deepseek">DeepSeek</option>
-        </select>
-        <p class="nav__meta nav__meta--sr" id="providerLabel">Local-Qwen</p>
-      </section>
-
       <section class="nav__block profile-form">
-        <h3>Профиль</h3>
+        <h3>Параметры</h3>
         <label class="profile-field">
-          <span>Пресет</span>
-          <select id="profileSelect" class="nav__select" aria-label="Профиль пользователя"></select>
-        </label>
-        <label class="nav__check"><input type="checkbox" id="injectProfile" checked> подмешивать в запрос</label>
-        <label class="profile-field">
-          <span>Имя</span>
-          <input type="text" id="profileName" autocomplete="name" placeholder="как к вам обращаться">
+          <span>Температура</span>
+          <input type="number" id="tuneTemperature" min="0" max="2" step="0.05" value="0.15">
         </label>
         <label class="profile-field">
-          <span>Роль</span>
-          <textarea id="profileRole" rows="2" placeholder="кто вы и чем занимаетесь"></textarea>
+          <span>Макс. токенов</span>
+          <input type="number" id="tuneMaxTokens" min="32" max="4096" step="1" value="320">
         </label>
         <label class="profile-field">
-          <span>Язык</span>
-          <select id="profileLanguage" class="nav__select" aria-label="Язык ответов">
-            <option value="ru">русский</option>
-            <option value="en">English</option>
-          </select>
+          <span>Окно контекста</span>
+          <input type="number" id="tuneContext" min="1024" max="32768" step="256" value="8192">
         </label>
-        <div class="profile-field">
-          <label for="profileStyle">Стиль ответа</label>
-          <select id="profileStyle" class="nav__select" aria-label="Стиль ответа">
-            <option value="кратко, по делу, без воды">кратко, без воды</option>
-            <option value="строго формально, сначала вывод">формально, сначала вывод</option>
-            <option value="дружелюбно и просто, как наставник">просто, как наставник</option>
-            <option value="__custom">свой вариант…</option>
-          </select>
-          <input type="text" id="profileStyleCustom" class="profile-field__extra" placeholder="опишите стиль" hidden>
-        </div>
-        <div class="profile-field">
-          <label for="profileFormat">Формат</label>
-          <select id="profileFormat" class="nav__select" aria-label="Формат ответа">
-            <option value="маркированные списки и короткие пункты">маркированный список</option>
-            <option value="сначала 1–2 предложения вывода, затем нумерованные шаги">вывод, затем шаги</option>
-            <option value="короткие абзацы, каждый совет с бытовым примером">абзацы с примерами</option>
-            <option value="__custom">свой вариант…</option>
-          </select>
-          <input type="text" id="profileFormatCustom" class="profile-field__extra" placeholder="опишите формат" hidden>
-        </div>
-        <div class="profile-field">
-          <span>Ограничения</span>
-          <ul id="profileConstraintList" class="profile-chips"></ul>
-          <div class="profile-add">
-            <input type="text" id="profileConstraintInput" placeholder="добавить ограничение" autocomplete="off">
-            <button type="button" id="addConstraintBtn" class="profile-add__btn">добавить</button>
-          </div>
-        </div>
-        <button type="button" id="saveProfileBtn" class="btn btn--accent btn--sm nav__btn">Сохранить профиль</button>
-        <p class="nav__meta" id="profileMeta">—</p>
+        <label class="profile-field">
+          <span>Квантование</span>
+          <select id="tuneQuant" class="nav__select" aria-label="Квантование"></select>
+        </label>
+        <label class="profile-field">
+          <span>Шаблон промпта</span>
+          <textarea id="tunePrompt" rows="8"></textarea>
+        </label>
+        <button type="button" id="saveTuneBtn" class="btn btn--accent btn--sm nav__btn">Сохранить</button>
+        <button type="button" id="tuneBtn" class="btn btn--ghost btn--sm nav__btn">Сравнить до и после</button>
+        <p class="nav__meta" id="tuneMeta">—</p>
       </section>
-
-      <section class="nav__block invariant-form">
-        <h3>Инварианты</h3>
-        <p class="nav__hint" style="display:block">Жёсткие рамки вне диалога. Ассистент откажется их нарушать.</p>
-        <label class="nav__check"><input type="checkbox" id="injectInvariants"> подмешивать в запрос</label>
-        <ul id="invariantList" class="invariant-list"></ul>
-        <label class="profile-field">
-          <span>Вид</span>
-          <select id="invariantKind" class="nav__select" aria-label="Вид инварианта">
-            <option value="architecture">архитектура</option>
-            <option value="decision">решение</option>
-            <option value="stack">стек</option>
-            <option value="business">бизнес-правило</option>
-          </select>
-        </label>
-        <label class="profile-field">
-          <span>Название</span>
-          <input type="text" id="invariantTitle" placeholder="например Стек Go">
-        </label>
-        <label class="profile-field">
-          <span>Правило</span>
-          <textarea id="invariantRule" rows="2" placeholder="что нельзя нарушать"></textarea>
-        </label>
-        <label class="profile-field">
-          <span>Запрещённые слова</span>
-          <input type="text" id="invariantForbid" placeholder="python, mongodb — через запятую">
-        </label>
-        <button type="button" id="saveInvariantBtn" class="btn btn--accent btn--sm nav__btn">Добавить инвариант</button>
-      </section>
-
-      <section class="nav__block">
-        <h3>Память в запросе</h3>
-        <div class="nav__checks">
-          <label class="nav__check"><input type="checkbox" id="injectSTM"> STM</label>
-          <label class="nav__check"><input type="checkbox" id="injectWM"> WM</label>
-          <label class="nav__check"><input type="checkbox" id="injectLTM"> LTM</label>
-        </div>
-        <label class="nav__field">
-          Окно STM
-          <input type="number" id="stmWindow" min="2" max="40" value="8">
-        </label>
-        <button type="button" id="saveStrategyBtn" class="btn btn--accent btn--sm nav__btn">Сохранить</button>
-        <p class="nav__meta" id="strategyLabel">LTM+WM+STM/8</p>
-        <p class="nav__hint" id="appSubtitle"></p>
-      </section>
-
-      <section class="nav__block nav__actions">
-        <button type="button" id="compareBtn" class="btn btn--ghost btn--sm nav__btn">Демо слоёв</button>
-        <button type="button" id="profileDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо профилей</button>
-        <button type="button" id="taskDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо паузы</button>
-        <button type="button" id="lifecycleDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо переходов</button>
-        <button type="button" id="invariantDemoBtn" class="btn btn--ghost btn--sm nav__btn">Демо инвариантов</button>
-        <a class="btn btn--ghost btn--sm nav__btn" href="/chatAi">ChatAI</a>
-        <label class="debug-toggle nav__debug" title="Панель отладки">
-          <input type="checkbox" id="debugToggle">
-          <span class="debug-toggle__track"></span>
-          <span>Сырой лог</span>
-        </label>
-      </section>
-
-      <section class="nav__block nav__memory">
-        <h3>Слои</h3>
-        <article class="memory-card memory-card--stm">
-          <header class="memory-card__head">
-            <h4>STM</h4>
-            <button type="button" id="clearStmBtn" class="btn btn--ghost btn--xs">очистить</button>
-          </header>
-          <p class="memory-card__meta" id="stmMeta">0 сообщ.</p>
-          <pre class="memory-card__pre" id="stmPre">диалог пуст</pre>
-        </article>
-        <article class="memory-card memory-card--wm">
-          <header class="memory-card__head">
-            <h4>WM</h4>
-            <button type="button" id="clearWmBtn" class="btn btn--ghost btn--xs">закрыть</button>
-          </header>
-          <p class="memory-card__meta" id="wmMeta">нет задачи</p>
-          <pre class="memory-card__pre" id="wmPre">—</pre>
-        </article>
-        <article class="memory-card memory-card--ltm">
-          <header class="memory-card__head">
-            <h4>LTM</h4>
-            <button type="button" id="clearLtmBtn" class="btn btn--ghost btn--xs">очистить</button>
-          </header>
-          <p class="memory-card__meta" id="ltmMeta">профиль пуст</p>
-          <pre class="memory-card__pre" id="ltmPre">—</pre>
-        </article>
-      </section>
-      </div>
-
-      <div class="nav__status">
-        <div class="nav__route">
-          <span class="nav__route-label">Роутинг</span>
-          <div id="routeList"><span class="branch-bar__empty">—</span></div>
-        </div>
       </div>
     </aside>
 
@@ -236,6 +96,6 @@
     </aside>
   </div>
 
-  <script src="/static/chat.js?v=cook8"></script>
+  <script src="/static/chat.js?v=cook11"></script>
 </body>
 </html>

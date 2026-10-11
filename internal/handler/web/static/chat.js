@@ -20,6 +20,7 @@ const settingsPanel = document.getElementById("settingsPanel");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 const saveStrategyBtn = document.getElementById("saveStrategyBtn");
 const compareBtn = document.getElementById("compareBtn");
+const tuneBtn = document.getElementById("tuneBtn");
 const injectSTM = document.getElementById("injectSTM");
 const injectWM = document.getElementById("injectWM");
 const injectLTM = document.getElementById("injectLTM");
@@ -555,9 +556,9 @@ function formatJSON(value) {
 function setDebugMode(enabled) {
   debugEnabled = enabled;
   localStorage.setItem(DEBUG_STORAGE_KEY, enabled ? "true" : "false");
-  debugToggle.checked = enabled;
+  if (debugToggle) debugToggle.checked = enabled;
   layoutEl.classList.toggle("layout--debug", enabled);
-  debugPanel.setAttribute("aria-hidden", enabled ? "false" : "true");
+  if (debugPanel) debugPanel.setAttribute("aria-hidden", enabled ? "false" : "true");
 }
 
 function setSettingsOpen(open) {
@@ -641,10 +642,12 @@ function logExchange({ requestBody, status, responseBody, durationMs, url = "/ap
 }
 
 function currentProvider() {
+  if (!providerSelect) return "local";
   return providerSelect.value || "local";
 }
 
 function updateProviderLabel() {
+  if (!providerLabel) return;
   const p = providers.find((x) => x.id === currentProvider());
   if (p) {
     const limit = p.context_limit ? ` · ${(p.context_limit / 1000).toFixed(0)}K` : "";
@@ -656,6 +659,7 @@ function updateProviderLabel() {
 
 function renderProviders(list, defaultProvider) {
   providers = list;
+  if (!providerSelect) return;
   providerSelect.innerHTML = "";
   for (const p of list) {
     const opt = document.createElement("option");
@@ -714,6 +718,7 @@ function policyLabel(p) {
 
 function applyPolicyToForm(p) {
   currentPolicy = p || currentPolicy;
+  if (!injectSTM || !stmWindow) return;
   injectSTM.checked = currentPolicy.inject_stm !== false;
   injectWM.checked = currentPolicy.inject_wm !== false;
   injectLTM.checked = currentPolicy.inject_ltm !== false;
@@ -762,7 +767,7 @@ function formatLTM(lt) {
 }
 
 function renderMemory(mem) {
-  if (!mem) return;
+  if (!mem || !stmMeta || !stmPre) return;
   const stm = mem.stm_preview || mem.short_term || [];
   const count = mem.short_term_count ?? stm.length;
   stmMeta.textContent = `${count} сообщ.`;
@@ -1513,11 +1518,11 @@ async function sendMessage(text, opts = {}) {
   const requestBody = {
     message: text,
     provider: currentProvider(),
-    inject_stm: injectSTM ? injectSTM.checked : true,
-    inject_wm: injectWM ? injectWM.checked : true,
-    inject_ltm: injectLTM ? injectLTM.checked : true,
-    inject_profile: injectProfile ? injectProfile.checked : true,
-    inject_invariants: injectInvariants ? injectInvariants.checked : true,
+    inject_stm: injectSTM ? injectSTM.checked : false,
+    inject_wm: injectWM ? injectWM.checked : false,
+    inject_ltm: injectLTM ? injectLTM.checked : false,
+    inject_profile: injectProfile ? injectProfile.checked : false,
+    inject_invariants: injectInvariants ? injectInvariants.checked : false,
   };
   const started = performance.now();
   try {
@@ -1598,6 +1603,91 @@ async function sendMessage(text, opts = {}) {
   }
 }
 
+function tuneSeconds(ms) {
+  if (ms == null) return "—";
+  return `${(ms / 1000).toFixed(1)} с`;
+}
+
+function tuneSideCells(side) {
+  const s = side || {};
+  const facts = `${s.facts_hit ?? 0}/${s.facts_total ?? 0}`;
+  return `<td>${s.quality ?? 0}<br>${facts}</td><td>${tuneSeconds(s.duration_ms)}<br>${s.completion_tokens ?? 0} ток. ответа</td>`;
+}
+
+function renderTune(report) {
+  hideWelcome();
+  const el = document.createElement("div");
+  el.className = "message message--assistant";
+  const rows = Array.isArray(report.rows) ? report.rows : [];
+  const before = report.before || {};
+  const after = report.after || {};
+  const beforeAvg = report.before_avg || {};
+  const afterAvg = report.after_avg || {};
+  let body = "";
+  rows.forEach((row) => {
+    const preview = (label, side) => {
+      const text = (side && (side.reply || side.error)) || "—";
+      return `<p class="day29__preview"><strong>${label}.</strong> ${escapeHTML(text)}</p>`;
+    };
+    body += `<tr><td>${escapeHTML(row.question || "")}${preview("До", row.before)}${preview("После", row.after)}</td>${tuneSideCells(row.before)}${tuneSideCells(row.after)}</tr>`;
+  });
+  const think = (on) => (on ? "включены" : "выключены");
+  const maxTok = (n) => (n ? String(n) : "без лимита");
+  el.innerHTML = `
+    <div class="message__avatar">AI</div>
+    <div class="message__body">
+      <div class="message__bubble">
+        <div class="day29">
+          <h3>Локальная модель: до и после</h3>
+          <p>${escapeHTML(report.quant_note || "")}</p>
+          <table>
+            <tr><th></th><th>До</th><th>После</th></tr>
+            <tr><td>Температура</td><td>${before.temperature}</td><td>${after.temperature}</td></tr>
+            <tr><td>Макс. токенов ответа</td><td>${maxTok(before.max_tokens)}</td><td>${maxTok(after.max_tokens)}</td></tr>
+            <tr><td>Окно контекста</td><td>${before.context_tokens}</td><td>${after.context_tokens}</td></tr>
+            <tr><td>Внутренние рассуждения</td><td>${think(before.thinking)}</td><td>${think(after.thinking)}</td></tr>
+            <tr><td>Качество, среднее</td><td>${beforeAvg.quality ?? 0}</td><td>${afterAvg.quality ?? 0}</td></tr>
+            <tr><td>Время на вопрос</td><td>${tuneSeconds(beforeAvg.duration_ms)}</td><td>${tuneSeconds(afterAvg.duration_ms)}</td></tr>
+            <tr><td>Токены ответа, сумма</td><td>${beforeAvg.completion_tokens ?? 0}</td><td>${afterAvg.completion_tokens ?? 0}</td></tr>
+            <tr><td>Токены запроса, сумма</td><td>${beforeAvg.prompt_tokens ?? 0}</td><td>${afterAvg.prompt_tokens ?? 0}</td></tr>
+          </table>
+          <p class="day29__label">Четыре рецепта, одни и те же цитаты</p>
+          <table>
+            <tr><th>Вопрос</th><th>До, качество</th><th>До, время</th><th>После, качество</th><th>После, время</th></tr>
+            ${body}
+          </table>
+        </div>
+      </div>
+      <span class="message__time">${escapeHTML(tuneSeconds(report.duration_ms))}</span>
+    </div>
+  `;
+  chatEl.appendChild(el);
+  scrollToBottom();
+}
+
+async function runTune() {
+  setLoading(true);
+  createMessage("user", "Сравнить локальную модель до и после настройки");
+  createTypingIndicator();
+  const started = performance.now();
+  try {
+    const res = await fetch("/api/day29", { method: "POST" });
+    const data = await res.json();
+    removeTypingIndicator();
+    logExchange({ url: "/api/day29", status: res.status, responseBody: data, durationMs: Math.round(performance.now() - started) });
+    if (!res.ok) {
+      createMessage("assistant", data.error || "Сравнение не собралось", "message--error");
+      return;
+    }
+    renderTune(data);
+  } catch {
+    removeTypingIndicator();
+    createMessage("assistant", "Не удалось сравнить локальную модель.", "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
+
 async function runCompare() {
   setLoading(true);
   createMessage("user", "Демо: посеять слои, вытеснить STM и сравнить ответы");
@@ -1647,15 +1737,21 @@ inputEl.addEventListener("input", autoResizeTextarea);
 clearBtn.addEventListener("click", () => {
   if (!isLoading) clearLayer("all", true);
 });
-clearStmBtn.addEventListener("click", () => {
-  if (!isLoading) clearLayer("short_term", true);
-});
-clearWmBtn.addEventListener("click", () => {
-  if (!isLoading) clearLayer("working", false);
-});
-clearLtmBtn.addEventListener("click", () => {
-  if (!isLoading) clearLayer("long_term", false);
-});
+if (clearStmBtn) {
+  clearStmBtn.addEventListener("click", () => {
+    if (!isLoading) clearLayer("short_term", true);
+  });
+}
+if (clearWmBtn) {
+  clearWmBtn.addEventListener("click", () => {
+    if (!isLoading) clearLayer("working", false);
+  });
+}
+if (clearLtmBtn) {
+  clearLtmBtn.addEventListener("click", () => {
+    if (!isLoading) clearLayer("long_term", false);
+  });
+}
 
 settingsBtn.addEventListener("click", () => setSettingsOpen(!layoutEl.classList.contains("layout--nav")));
 settingsCloseBtn.addEventListener("click", () => setSettingsOpen(false));
@@ -1666,11 +1762,18 @@ if (settingsBackdrop) {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") setSettingsOpen(false);
 });
-saveStrategyBtn.addEventListener("click", savePolicy);
+if (saveStrategyBtn) saveStrategyBtn.addEventListener("click", savePolicy);
 if (saveProfileBtn) saveProfileBtn.addEventListener("click", saveProfile);
-compareBtn.addEventListener("click", () => {
-  if (!isLoading) runCompare();
-});
+if (tuneBtn) {
+  tuneBtn.addEventListener("click", () => {
+    if (!isLoading) runTune();
+  });
+}
+if (compareBtn) {
+  compareBtn.addEventListener("click", () => {
+    if (!isLoading) runCompare();
+  });
+}
 if (profileDemoBtn) {
   profileDemoBtn.addEventListener("click", () => {
     if (!isLoading) runProfileDemo();
@@ -1728,12 +1831,14 @@ if (profileConstraintInput) {
   });
 }
 
-providerSelect.addEventListener("change", () => {
-  localStorage.setItem(PROVIDER_STORAGE_KEY, currentProvider());
-  updateProviderLabel();
-});
-debugToggle.addEventListener("change", () => setDebugMode(debugToggle.checked));
-clearDebugBtn.addEventListener("click", clearDebugLog);
+if (providerSelect) {
+  providerSelect.addEventListener("change", () => {
+    localStorage.setItem(PROVIDER_STORAGE_KEY, currentProvider());
+    updateProviderLabel();
+  });
+}
+if (debugToggle) debugToggle.addEventListener("change", () => setDebugMode(debugToggle.checked));
+if (clearDebugBtn) clearDebugBtn.addEventListener("click", clearDebugLog);
 
 if (netRetryBtn) {
   netRetryBtn.addEventListener("click", () => {
@@ -1749,7 +1854,78 @@ window.addEventListener("offline", updateNetBanner);
 setDebugMode(debugEnabled);
 setSettingsOpen(false);
 updateNetBanner();
-Promise.all([loadProviders(), loadMemory(), loadHistory(), loadProfiles()]).then(() => {
+function fillTuneForm(data) {
+  const temperature = document.getElementById("tuneTemperature");
+  const maxTokens = document.getElementById("tuneMaxTokens");
+  const context = document.getElementById("tuneContext");
+  const quant = document.getElementById("tuneQuant");
+  const prompt = document.getElementById("tunePrompt");
+  if (!temperature || !data) return;
+  temperature.value = data.temperature;
+  maxTokens.value = data.max_tokens;
+  context.value = data.context_tokens;
+  prompt.value = data.prompt || "";
+  const options = Array.isArray(data.quants) && data.quants.length ? data.quants : [data.quant || "Q4_K_M"];
+  quant.innerHTML = "";
+  options.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    quant.appendChild(opt);
+  });
+  quant.value = data.quant || options[0];
+  if (options.length < 2) quant.disabled = true;
+}
+
+async function loadTuneSettings() {
+  try {
+    const res = await fetch("/api/day29/settings");
+    const data = await res.json();
+    if (!res.ok) return;
+    fillTuneForm(data);
+    const meta = document.getElementById("tuneMeta");
+    if (meta) meta.textContent = "текущие параметры локальной модели";
+  } catch {
+    /* ignore */
+  }
+}
+
+async function saveTuneSettings() {
+  const temperature = document.getElementById("tuneTemperature");
+  const maxTokens = document.getElementById("tuneMaxTokens");
+  const context = document.getElementById("tuneContext");
+  const quant = document.getElementById("tuneQuant");
+  const prompt = document.getElementById("tunePrompt");
+  const meta = document.getElementById("tuneMeta");
+  const body = {
+    temperature: Number(temperature.value),
+    max_tokens: Number(maxTokens.value),
+    context_tokens: Number(context.value),
+    quant: quant.value,
+    prompt: prompt.value,
+  };
+  try {
+    const res = await fetch("/api/day29/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (meta) meta.textContent = data.error || "не сохранилось";
+      return;
+    }
+    fillTuneForm(data);
+    if (meta) meta.textContent = "сохранено";
+  } catch {
+    if (meta) meta.textContent = "нет связи с сервером";
+  }
+}
+
+const saveTuneBtn = document.getElementById("saveTuneBtn");
+if (saveTuneBtn) saveTuneBtn.addEventListener("click", () => saveTuneSettings());
+
+Promise.all([loadProviders(), loadMemory(), loadHistory(), loadProfiles(), loadTuneSettings()]).then(() => {
   restoreUnsent();
   inputEl.focus();
 });

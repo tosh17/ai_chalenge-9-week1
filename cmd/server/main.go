@@ -44,8 +44,8 @@ func main() {
 		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day25-memory").
-		WithSystemPrompt("Ты кулинарный помощник. Отвечай по фрагментам поваренной книги из системного сообщения. Граммы, время и шаги бери только оттуда. Если нужного рецепта во фрагментах нет, так и скажи. Отвечай по-русски и коротко.").
+	chatAgent := agent.New("day29-local").
+		WithSystemPrompt("Ты кулинарный помощник. Отвечай по-русски, 2–4 коротких предложения. Рецепт и количества давай из своих знаний. Не ищи фрагмент книги и не пиши, что ответа нет в книге.").
 		WithLayers(layers).
 		WithProfiles(profiles).
 		WithInvariants(invariants).
@@ -68,13 +68,10 @@ func main() {
 		WithBackendLimit(agent.ProviderDeepSeek, "DeepSeek", cfg.DeepSeekModel, deepseekClient, cfg.ContextTokenLimit)
 
 	var mcpClients []*mcp.Client
-	if cfg.MCPEnabled {
-		mcpClients = attachMCP(chatAgent, cfg)
-	}
 
 	if cfg.LocalEnabled {
 		localURL := config.NormalizeChatURL(cfg.LocalAPIURL)
-		localClient := deepseek.NewClient(cfg.LocalAPIKey, cfg.LocalModel, localURL)
+		localClient := deepseek.NewClient(cfg.LocalAPIKey, cfg.LocalModel, localURL).WithSampling(agent.CookbookSampling())
 		chatAgent.
 			WithBackendLimit(agent.ProviderLocal, cfg.LocalTitle, cfg.LocalModel, localClient, cfg.LocalContextLimit).
 			WithDefaultProvider(agent.ProviderLocal)

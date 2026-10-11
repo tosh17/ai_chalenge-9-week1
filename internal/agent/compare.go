@@ -234,7 +234,7 @@ func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, re
 		cmp.Struct.Reply = quoteBlock(cmp.Citations)
 		return cmp
 	}
-	reply, errText := completeCited(ctx, llm, filtered, query, taskPrompt(task, history))
+	reply, errText := completeCited(ctx, llm, filtered, query, taskPrompt(task, history), a.answerPrompt())
 	cites := index.Citations(filtered)
 	cmp.Citations = cites
 	cmp.Fixed.Reply = stripReplyChrome(reply)
@@ -245,7 +245,7 @@ func (a *Agent) answerCited(ctx context.Context, llm LLM, query, searchQuery, re
 	return cmp
 }
 
-const citedPrompt = "Ты кулинарный помощник. Отвечай по-русски, коротко, как следующая реплика диалога. Не пиши заголовки «Ответ» и «Источники». Если пользователь меняет цель, прими новую и не удерживай старую. Числа из книги бери только из цитат ниже. Если цитаты не отвечают на вопрос, но вопрос про еду, ответь из общих знаний и прямо напиши, что это не из книги. Если вопрос не про еду и не меняет цель, скажи, что это не по теме разговора."
+const citedPrompt = "Ты кулинарный помощник. Отвечай по-русски, 2–4 коротких предложения, без рассуждений и без заголовков. Рецепт и количества давай из своих знаний. Не ищи фрагмент книги и не пиши, что ответа нет в книге."
 
 const outsidePrompt = "В книге достаточно близкого фрагмента нет. Ответь по-русски, коротко. Если вопрос про еду и продолжает разговор, ответь из общих знаний и прямо напиши, что это не из книги. Если вопрос не про еду и не меняет цель, ответь только: это не по теме разговора. Если пользователь меняет цель, прими новую. Не придумывай цитату из поваренной книги."
 
@@ -324,9 +324,12 @@ func controlRows(scored map[string]ControlRow) []ControlRow {
 	return out
 }
 
-func completeCited(ctx context.Context, llm LLM, hits []index.Match, query, contextNote string) (string, string) {
+func completeCited(ctx context.Context, llm LLM, hits []index.Match, query, contextNote, prompt string) (string, string) {
+	if strings.TrimSpace(prompt) == "" {
+		prompt = citedPrompt
+	}
 	messages := []deepseek.Message{
-		{Role: "system", Content: citedPrompt},
+		{Role: "system", Content: prompt},
 		{Role: "system", Content: quoteBlock(index.Citations(hits))},
 	}
 	if strings.TrimSpace(contextNote) != "" {

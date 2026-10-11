@@ -186,13 +186,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		InjectProfile:    req.InjectProfile,
 		InjectInvariants: req.InjectInvariants,
 	}
-	var result agent.Result
-	var err error
-	if h.agent.HasCompare() {
-		result, err = h.agent.Compare(r.Context(), agentReq)
-	} else {
-		result, err = h.agent.Handle(r.Context(), agentReq)
-	}
+	result, err := h.agent.Handle(r.Context(), agentReq)
 	if err != nil {
 		var overflow *agent.ErrContextOverflow
 		if errors.As(err, &overflow) {
@@ -329,6 +323,38 @@ func (h *Handler) ChatAIRun(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Day21(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, index.Snapshot())
+}
+
+func (h *Handler) Day29SettingsGet(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.agent.ReadLocalSettings(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (h *Handler) Day29SettingsSet(w http.ResponseWriter, r *http.Request) {
+	var in agent.LocalSettings
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "invalid json body"})
+		return
+	}
+	settings, err := h.agent.ApplyLocalSettings(in)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (h *Handler) Day29(w http.ResponseWriter, r *http.Request) {
+	report, err := h.agent.RunLocalTune(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (h *Handler) StrategyCompare(w http.ResponseWriter, r *http.Request) {

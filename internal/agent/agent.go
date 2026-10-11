@@ -111,6 +111,8 @@ type Agent struct {
 	manual            *index.Searcher
 	fixed             *index.Searcher
 	report            *index.Report
+	localPrompt       string
+	localQuant        string
 
 	mu      sync.Mutex
 	session tokens.SessionTotals

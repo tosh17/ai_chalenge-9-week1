@@ -12,14 +12,35 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
+// Sampling — параметры генерации. Нулевые поля в запрос не попадают.
+type Sampling struct {
+	Temperature     *float64
+	MaxTokens       int
+	ReasoningEffort string
+	NumCtx          int
+}
+
+// ModelFile — файл модели на Ollama-совместимом хосте.
+type ModelFile struct {
+	Name    string `json:"name"`
+	Quant   string `json:"quant"`
+	Params  string `json:"params"`
+	Bytes   int64  `json:"bytes"`
+	Context int    `json:"context"`
+	Family  string `json:"family"`
+}
+
 type Client struct {
-	apiKey  string
-	model   string
-	baseURL string
-	http    *http.Client
+	apiKey   string
+	model    string
+	baseURL  string
+	http     *http.Client
+	mu       sync.Mutex
+	sampling Sampling
 }
 
 type Message struct {
@@ -45,10 +66,20 @@ type Tool struct {
 }
 
 type chatRequest struct {
-	Model    string     `json:"model"`
-	Messages []Message  `json:"messages"`
-	Stream   bool       `json:"stream"`
-	Tools    []wireTool `json:"tools,omitempty"`
+	Model           string      `json:"model"`
+	Messages        []Message   `json:"messages"`
+	Stream          bool        `json:"stream"`
+	Tools           []wireTool  `json:"tools,omitempty"`
+	Temperature     *float64    `json:"temperature,omitempty"`
+	MaxTokens       int         `json:"max_tokens,omitempty"`
+	ReasoningEffort string      `json:"reasoning_effort,omitempty"`
+	Options         *genOptions `json:"options,omitempty"`
+}
+
+type genOptions struct {
+	NumCtx      int     `json:"num_ctx,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
+	NumPredict  int     `json:"num_predict,omitempty"`
 }
 
 type chatResponse struct {
@@ -94,6 +125,48 @@ func NewClient(apiKey, model, baseURL string) *Client {
 	}
 }
 
+// WithSampling включает параметры генерации для всех вызовов этого клиента.
+func (c *Client) WithSampling(s Sampling) *Client {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	c.sampling = s
+	c.mu.Unlock()
+	return c
+}
+
+// SamplingCopy — текущие параметры генерации.
+func (c *Client) SamplingCopy() Sampling {
+	if c == nil {
+		return Sampling{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sampling
+}
+
+// Model — id модели в запросе chat completions.
+func (c *Client) Model() string {
+	if c == nil {
+		return ""
+	}
+	return c.model
+}
+
+// PlainCopy — тот же хост и ключ, без параметров генерации.
+func (c *Client) PlainCopy() *Client {
+	if c == nil {
+		return nil
+	}
+	return &Client{
+		apiKey:  c.apiKey,
+		model:   c.model,
+		baseURL: c.baseURL,
+		http:    c.http,
+	}
+}
+
 // newHTTPClient обходит баг macOS Security.framework (x509 OSStatus -26276).
 // RootCAs не задаём: SystemCertPool() на Darwin — это Keychain (systemPool),
 // а не Go-корни. Проверку делает crypto/x509 + fallback из
@@ -114,16 +187,99 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (ChatResult, erro
 	return c.ChatTools(ctx, messages, nil)
 }
 
+func (c *Client) marshalChat(messages []Message, tools []Tool) ([]byte, error) {
+	c.mu.Lock()
+	sampling := c.sampling
+	model := c.model
+	c.mu.Unlock()
+	req := chatRequest{
+		Model:    model,
+		Messages: messages,
+		Stream:   false,
+		Tools:    wireTools(tools),
+	}
+	if sampling.Temperature != nil {
+		req.Temperature = sampling.Temperature
+	}
+	if sampling.MaxTokens > 0 {
+		req.MaxTokens = sampling.MaxTokens
+	}
+	if sampling.ReasoningEffort != "" {
+		req.ReasoningEffort = sampling.ReasoningEffort
+	}
+	if sampling.NumCtx > 0 || sampling.MaxTokens > 0 || sampling.Temperature != nil {
+		opt := &genOptions{NumCtx: sampling.NumCtx, NumPredict: sampling.MaxTokens}
+		if sampling.Temperature != nil {
+			opt.Temperature = *sampling.Temperature
+		}
+		req.Options = opt
+	}
+	return json.Marshal(req)
+}
+
+// ListModels читает /api/tags на том же хосте, что и chat completions.
+func (c *Client) ListModels(ctx context.Context) ([]ModelFile, error) {
+	if c == nil {
+		return nil, fmt.Errorf("нет клиента")
+	}
+	u, err := url.Parse(c.baseURL)
+	if err != nil || u.Host == "" {
+		return nil, fmt.Errorf("адрес модели: %w", err)
+	}
+	endpoint := u.Scheme + "://" + u.Host + "/api/tags"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, wrapNet(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("tags status %d", resp.StatusCode)
+	}
+	var payload struct {
+		Models []struct {
+			Name    string `json:"name"`
+			Size    int64  `json:"size"`
+			Details struct {
+				Family     string `json:"family"`
+				Params     string `json:"parameter_size"`
+				Quant      string `json:"quantization_level"`
+				ContextLen int    `json:"context_length"`
+			} `json:"details"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	out := make([]ModelFile, 0, len(payload.Models))
+	for _, m := range payload.Models {
+		out = append(out, ModelFile{
+			Name:    m.Name,
+			Quant:   m.Details.Quant,
+			Params:  m.Details.Params,
+			Bytes:   m.Size,
+			Context: m.Details.ContextLen,
+			Family:  m.Details.Family,
+		})
+	}
+	return out, nil
+}
+
 // ChatTools отправляет запрос с описаниями инструментов. Пустой tools равен обычному Chat.
 func (c *Client) ChatTools(ctx context.Context, messages []Message, tools []Tool) (ChatResult, error) {
 	start := time.Now()
 
-	body, err := json.Marshal(chatRequest{
-		Model:    c.model,
-		Messages: messages,
-		Stream:   false,
-		Tools:    wireTools(tools),
-	})
+	body, err := c.marshalChat(messages, tools)
 	if err != nil {
 		return ChatResult{}, fmt.Errorf("marshal request: %w", err)
 	}
