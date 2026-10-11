@@ -10,6 +10,7 @@ const debugPanel = document.getElementById("debugPanel");
 const debugLog = document.getElementById("debugLog");
 const clearDebugBtn = document.getElementById("clearDebugBtn");
 const providerSelect = document.getElementById("providerSelect");
+const hostCheckBtn = document.getElementById("hostCheckBtn");
 const providerLabel = document.getElementById("providerLabel");
 const strategyLabel = document.getElementById("strategyLabel");
 const appSubtitle = document.getElementById("appSubtitle");
@@ -399,6 +400,7 @@ function removeTypingIndicator() {
 
 function setLoading(loading) {
   isLoading = loading;
+  if (hostCheckBtn) hostCheckBtn.disabled = loading;
   if (saveStrategyBtn) saveStrategyBtn.disabled = loading;
   if (saveProfileBtn) saveProfileBtn.disabled = loading;
   if (profileDemoBtn) profileDemoBtn.disabled = loading;
@@ -1518,6 +1520,70 @@ if (saveProfileBtn) saveProfileBtn.addEventListener("click", saveProfile);
 compareBtn.addEventListener("click", () => {
   if (!isLoading) runCompare();
 });
+if (hostCheckBtn) {
+  hostCheckBtn.addEventListener("click", () => {
+    if (!isLoading) runHostCheck();
+  });
+}
+
+function hostRow(label, value) {
+  return `<tr><th>${escapeHTML(label)}</th><td>${escapeHTML(value)}</td></tr>`;
+}
+
+function renderHostCheck(report) {
+  hideWelcome();
+  const shots = Array.isArray(report.shots) ? report.shots : [];
+  const shotText = shots.map((shot) => {
+    const mark = shot.ok ? "ок" : "сбой";
+    const extra = shot.reply ? ` «${shot.reply}»` : "";
+    const err = shot.error ? ` ${shot.error}` : "";
+    return `${shot.n}. ${mark}, ${formatDuration(shot.duration_ms)}${extra}${err}`;
+  }).join("\n");
+  const ctx = [];
+  if (report.context_length) ctx.push(`файл ${report.context_length}`);
+  if (report.num_ctx) ctx.push(`num_ctx ${report.num_ctx}`);
+  if (report.app_context_limit) ctx.push(`счётчик чата ${report.app_context_limit}`);
+  const el = document.createElement("div");
+  el.className = "message message--assistant";
+  el.innerHTML = `
+    <div class="message__avatar">AI</div>
+    <div class="message__body">
+      <div class="message__bubble">
+        <div class="host-check">
+          <p>${escapeHTML(report.summary || "")}</p>
+          <table>
+            ${hostRow("Сеть", report.network_ok ? `да, ${formatDuration(report.network_ms)}` : "нет")}
+            ${hostRow("Модель", [report.model, report.quant, report.parameter_size].filter(Boolean).join(" · ") || "—")}
+            ${hostRow("Контекст", ctx.join(", ") || "—")}
+            ${hostRow("Запросы", shotText || "—")}
+            ${hostRow("Rate limit", report.rate_limit || "—")}
+          </table>
+        </div>
+      </div>
+    </div>`;
+  chatEl.appendChild(el);
+  scrollToBottom();
+}
+
+async function runHostCheck() {
+  setLoading(true);
+  createTypingIndicator();
+  try {
+    const res = await fetch("/api/day30", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    removeTypingIndicator();
+    if (!res.ok) {
+      createMessage("assistant", (data && data.error) || "Проверка не прошла", "message--error");
+      return;
+    }
+    renderHostCheck(data);
+  } catch (err) {
+    removeTypingIndicator();
+    createMessage("assistant", "Нет связи с сервером чата.", "message--error");
+  } finally {
+    setLoading(false);
+  }
+}
 if (profileDemoBtn) {
   profileDemoBtn.addEventListener("click", () => {
     if (!isLoading) runProfileDemo();

@@ -46,6 +46,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/history", h.History)
 	mux.HandleFunc("DELETE /api/history", h.ClearHistory)
 	mux.HandleFunc("POST /api/chat", h.Chat)
+	mux.HandleFunc("POST /api/day30", h.Day30)
 	mux.HandleFunc("POST /api/chat-ai", h.ChatAIRun)
 	mux.HandleFunc("GET /api/strategy", h.StrategyGet)
 	mux.HandleFunc("POST /api/strategy", h.StrategySet)

@@ -1940,3 +1940,33 @@ a.btn.nav__btn {
   border: 1px solid var(--border);
   background: #f6f3ec;
 }
+
+.host-check {
+  white-space: normal;
+  display: grid;
+  gap: 8px;
+}
+
+.host-check p {
+  margin: 0;
+}
+
+.host-check table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.host-check th,
+.host-check td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.host-check th {
+  width: 8.5rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}

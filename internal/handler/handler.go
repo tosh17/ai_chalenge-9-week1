@@ -669,6 +669,15 @@ func (h *Handler) MemoryWrite(w http.ResponseWriter, r *http.Request) {
 	h.MemoryGet(w, r)
 }
 
+func (h *Handler) Day30(w http.ResponseWriter, r *http.Request) {
+	report, err := h.agent.ProbeLocal(r.Context())
+	if err != nil && report.Host == "" && len(report.Shots) == 0 {
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 func (h *Handler) MemoryDemo(w http.ResponseWriter, r *http.Request) {
 	var req providerOnlyBody
 	_ = json.NewDecoder(r.Body).Decode(&req)

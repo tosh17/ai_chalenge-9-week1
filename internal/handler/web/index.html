@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent</title>
-  <link rel="stylesheet" href="/static/style.css?v=day20-en">
+  <link rel="stylesheet" href="/static/style.css?v=day30">
 </head>
 <body>
   <div class="layout" id="layout">
@@ -13,7 +13,7 @@
         <button type="button" id="settingsBtn" class="chat-bar__menu" title="Настройки" aria-label="Открыть настройки">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.7 1 1.2 1.5 1.2H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
         </button>
-        <span class="chat-bar__title" id="chatTitle">Чат</span>
+        <span class="chat-bar__title" id="chatTitle">День 30</span>
         <button type="button" id="clearBtn" class="btn btn--ghost btn--sm chat-bar__new">Новый чат</button>
         <nav class="phase-track" id="phaseTrack" aria-label="Фазы задачи">
           <span data-phase="planning">планирование</span>
@@ -34,7 +34,7 @@
       <main class="chat" id="chat">
         <div class="welcome" id="welcome">
           <h2>Ассистент</h2>
-          <p>Напишите, что есть на кухне. Агент ищет рецепт на английских страницах, переводит его и ставит фото рядом с блюдом.</p>
+          <p>Чат дня 20 на локальной Qwen с домашнего сервера. Кнопка «Проверить модель» смотрит сеть, несколько запросов подряд и лимиты.</p>
         </div>
       </main>
 
@@ -73,6 +73,8 @@
           <option value="deepseek">DeepSeek</option>
         </select>
         <p class="nav__meta nav__meta--sr" id="providerLabel">Local-Qwen</p>
+        <button type="button" id="hostCheckBtn" class="btn btn--accent btn--sm nav__btn">Проверить модель</button>
+        <p class="nav__hint">Доступ по сети, три запроса подряд, окно контекста и rate limit.</p>
       </section>
 
       <section class="nav__block profile-form">
@@ -236,6 +238,6 @@
     </aside>
   </div>
 
-  <script src="/static/chat.js?v=day20-en"></script>
+  <script src="/static/chat.js?v=day30"></script>
 </body>
 </html>

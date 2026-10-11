@@ -43,7 +43,7 @@ func main() {
 		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day20-orchestrator").
+	chatAgent := agent.New("day30-local").
 		WithSystemPrompt("Ты кулинарный помощник. Подбираешь блюдо из продуктов, которые назвал человек. Факты ищи только на английских страницах: web_search с английским запросом, затем web_fetch, затем translate_en_ru. Ответ человеку только по-русски, без иероглифов и без английских абзацев. Фото блюда — web_image, и сразу под этим блюдом поставь image_url отдельной строкой, без HTML. Блок-схему не рисуй сам. Граммы и минуты бери только из переведённого рецепта.").
 		WithLayers(layers).
 		WithProfiles(profiles).
