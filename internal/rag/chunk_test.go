@@ -6,6 +6,17 @@ import (
 	"unicode/utf8"
 )
 
+func TestChunkCodeKeepsRuneBoundary(t *testing.T) {
+	line := "func " + strings.Repeat("я", 90) + "() {}"
+	chunks := ChunkCode("internal/rag/chunk.go", "package rag\n\n"+line+"\n")
+	if len(chunks) == 0 {
+		t.Fatal("no chunks")
+	}
+	if !utf8.ValidString(chunks[0].Heading) {
+		t.Fatalf("broken heading %q", chunks[0].Heading)
+	}
+}
+
 func TestChunkMarkdownSplitsHeadings(t *testing.T) {
 	body := "# Проект\n\nКорень сервиса.\n\n## API\n\nPOST /api/chat принимает message.\n\n## Память\n\nФайлы лежат в data/memory.\n"
 	chunks := ChunkMarkdown("docs/api.md", body)

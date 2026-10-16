@@ -21,6 +21,72 @@ type Chunk struct {
 	Vector  []float32 `json:"vector,omitempty"`
 }
 
+// ChunkFile режет markdown по заголовкам, а исходники — по функциям.
+func ChunkFile(path, body string) []Chunk {
+	if strings.HasSuffix(strings.ToLower(path), ".md") {
+		return ChunkMarkdown(path, body)
+	}
+	return ChunkCode(path, body)
+}
+
+// ChunkCode делит исходник по func/type и длинные куски — по размеру.
+func ChunkCode(path, body string) []Chunk {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil
+	}
+	var sections []string
+	var buf strings.Builder
+	flush := func() {
+		text := strings.TrimSpace(buf.String())
+		buf.Reset()
+		if text != "" {
+			sections = append(sections, text)
+		}
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if buf.Len() > 0 && (strings.HasPrefix(line, "func ") || strings.HasPrefix(line, "type ")) {
+			flush()
+		}
+		buf.WriteString(line)
+		buf.WriteByte('\n')
+	}
+	flush()
+
+	var out []Chunk
+	for _, text := range sections {
+		for _, part := range splitLong(codeHeading(text), text) {
+			part = strings.TrimSpace(part)
+			if utf8.RuneCountInString(part) < 20 {
+				continue
+			}
+			heading := codeHeading(part)
+			out = append(out, Chunk{
+				ID:      chunkID(path, heading, part),
+				Path:    path,
+				Heading: heading,
+				Text:    path + "\n" + part,
+			})
+		}
+	}
+	return out
+}
+
+func codeHeading(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "func ") || strings.HasPrefix(line, "type ") {
+			runes := []rune(line)
+			if len(runes) > 80 {
+				return string(runes[:80])
+			}
+			return line
+		}
+	}
+	return ""
+}
+
 // ChunkMarkdown режет markdown по заголовкам и длинные секции — по абзацам.
 func ChunkMarkdown(path, body string) []Chunk {
 	body = strings.ReplaceAll(body, "\r\n", "\n")

@@ -41,13 +41,15 @@ type Status struct {
 }
 
 // Options — откуда читать документацию и куда класть кэш векторов.
+// IncludeCode добавляет *.go к README и docs: это индекс ревью, не /help.
 type Options struct {
-	Root      string
-	CachePath string
-	Model     string
-	OllamaURL string
-	Embedder  Embedder
-	TopK      int
+	Root        string
+	CachePath   string
+	Model       string
+	OllamaURL   string
+	Embedder    Embedder
+	TopK        int
+	IncludeCode bool
 }
 
 // Index хранит чанки README и docs/.
@@ -59,6 +61,7 @@ type Index struct {
 	ollamaURL  string
 	embedder   Embedder
 	topK       int
+	code       bool
 	chunks     []Chunk
 	ready      bool
 	mode       string
@@ -81,6 +84,7 @@ func New(opt Options) *Index {
 		ollamaURL: opt.OllamaURL,
 		embedder:  opt.Embedder,
 		topK:      topK,
+		code:      opt.IncludeCode,
 		mode:      "lexical",
 	}
 }
@@ -162,13 +166,13 @@ func (idx *Index) Status() Status {
 }
 
 func (idx *Index) build(ctx context.Context) error {
-	docs, err := loadDocs(idx.root)
+	docs, err := loadCorpus(idx.root, idx.code)
 	if err != nil {
 		return err
 	}
 	var chunks []Chunk
 	for _, doc := range docs {
-		chunks = append(chunks, ChunkMarkdown(doc.path, doc.body)...)
+		chunks = append(chunks, ChunkFile(doc.path, doc.body)...)
 	}
 	cached := idx.loadCache()
 	missing := make([]int, 0)
@@ -180,6 +184,10 @@ func (idx *Index) build(ctx context.Context) error {
 		missing = append(missing, i)
 	}
 	if idx.embedder != nil && len(missing) > 0 {
+		const maxNew = 48
+		if len(missing) > maxNew {
+			missing = missing[:maxNew]
+		}
 		if err := idx.embedMissing(ctx, chunks, missing); err != nil {
 			idx.embedError = err.Error()
 		}
@@ -225,14 +233,7 @@ func (idx *Index) embedMissing(ctx context.Context, chunks []Chunk, missing []in
 			if first == nil {
 				first = err
 			}
-			for _, at := range part {
-				vec, oneErr := idx.embedder.Embed(ctx, []string{"search_document: " + chunks[at].Text})
-				if oneErr != nil || len(vec) != 1 {
-					continue
-				}
-				chunks[at].Vector = vec[0]
-			}
-			continue
+			break
 		}
 		for i, at := range part {
 			chunks[at].Vector = vectors[i]
@@ -296,6 +297,63 @@ func loadDocs(root string) ([]rawDoc, error) {
 		return nil, fmt.Errorf("rag: no markdown in %s", root)
 	}
 	return docs, nil
+}
+
+func loadCorpus(root string, includeCode bool) ([]rawDoc, error) {
+	docs, err := loadDocs(root)
+	if err != nil || !includeCode {
+		return docs, err
+	}
+	code, err := loadCode(root)
+	if err != nil || len(code) == 0 {
+		return docs, nil
+	}
+	docs = append(docs, code...)
+	sort.Slice(docs, func(i, j int) bool { return docs[i].path < docs[j].path })
+	return docs, nil
+}
+
+func loadCode(root string) ([]rawDoc, error) {
+	var docs []rawDoc
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if path != root && skipCodeDir(name) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(name, ".go") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() > 60_000 {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil || strings.TrimSpace(string(body)) == "" {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		docs = append(docs, rawDoc{path: filepath.ToSlash(rel), body: string(body)})
+		return nil
+	})
+	return docs, err
+}
+
+func skipCodeDir(name string) bool {
+	switch name {
+	case ".git", "bin", "data", "build", ".gradle", "node_modules", ".cursor", ".omp", "vendor":
+		return true
+	default:
+		return false
+	}
 }
 
 type cacheFile struct {

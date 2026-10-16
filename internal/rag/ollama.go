@@ -26,7 +26,7 @@ func NewOllama(base, model string) *Ollama {
 	return &Ollama{
 		base:  base,
 		model: model,
-		http:  &http.Client{Timeout: 90 * time.Second},
+		http:  &http.Client{Timeout: 45 * time.Second},
 	}
 }
 
