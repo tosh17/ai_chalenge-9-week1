@@ -49,6 +49,13 @@ type Config struct {
 	ObserveCity    string
 	ObserveEvery   time.Duration
 	ObserveDir     string
+
+	RAGEnabled    bool
+	RAGOllamaURL  string
+	RAGEmbedModel string
+	RAGTopK       int
+	RAGCachePath  string
+	ProjectRoot   string
 }
 
 func Load() (*Config, error) {
@@ -84,6 +91,12 @@ func Load() (*Config, error) {
 		ObserveCity:       getEnv("OBSERVE_CITY", "Волгоград"),
 		ObserveEvery:      getEnvDuration("OBSERVE_EVERY", 15*time.Minute),
 		ObserveDir:        getEnv("OBSERVE_DIR", "data/observations"),
+		RAGEnabled:        getEnvBool("RAG_ENABLED", true),
+		RAGOllamaURL:      getEnv("RAG_OLLAMA_URL", "http://10.10.1.101:11434"),
+		RAGEmbedModel:     getEnv("RAG_EMBED_MODEL", "nomic-embed-text"),
+		RAGTopK:           getEnvInt("RAG_TOP_K", 5),
+		RAGCachePath:      getEnv("RAG_CACHE_PATH", "data/rag/index.json"),
+		ProjectRoot:       getEnv("PROJECT_ROOT", ""),
 	}
 
 	cfg.DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")

@@ -898,6 +898,30 @@ body {
   font-size: 0.78rem;
 }
 
+.welcome__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.help-card {
+  margin-top: 6px;
+  max-width: 100%;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.help-card ul {
+  margin: 4px 0 0;
+  padding-left: 1.1rem;
+}
+
+.help-card code {
+  font-size: 0.72rem;
+}
+
 .message {
   display: flex;
   gap: 8px;

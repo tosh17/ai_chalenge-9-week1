@@ -132,11 +132,13 @@ function createMessage(role, content, extraClass = "", meta = {}) {
   const steps = !isUser && !isSystem ? turnStepsHTML(meta.steps) : "";
   const bubbleHTML = renderReply(content);
   const bubble = bubbleHTML ? `<div class="message__bubble">${bubbleHTML}</div>` : "";
+  const help = !isUser && !isSystem ? helpHTML(meta.help) : "";
   el.innerHTML = `
     <div class="message__avatar">${avatar}</div>
     <div class="message__body">
       ${trace}
       ${bubble}
+      ${help}
       ${chartHTML(content, meta.toolEvents)}
       ${steps}
       ${timeLabel}
@@ -163,6 +165,21 @@ function renderReply(content) {
     return `<img src="${escapeHTML(src)}" alt="${escapeHTML(imageAlt(src))}">`;
   });
   return html.trim();
+}
+
+function helpHTML(help) {
+  if (!help || typeof help !== "object") return "";
+  const branch = help.branch
+    ? `<p>ветка <code>${escapeHTML(help.branch)}</code>${help.head ? ` · ${escapeHTML(help.head)}` : ""}</p>`
+    : "";
+  const sources = (help.sources || []).map((src) => {
+    const score = typeof src.score === "number" ? ` ${Math.round(src.score * 100)}%` : "";
+    const heading = src.heading ? ` ${escapeHTML(src.heading)}` : "";
+    return `<li><code>${escapeHTML(src.path || "")}</code>${heading}${score}</li>`;
+  }).join("");
+  const tools = (help.tools || []).map((name) => `<code>${escapeHTML(name)}</code>`).join(" ");
+  const mode = help.mode ? `<p>RAG ${escapeHTML(help.mode)}${help.degraded ? ", без модели" : ""}</p>` : "";
+  return `<div class="help-card">${branch}${mode}${sources ? `<ul>${sources}</ul>` : ""}${tools ? `<p>MCP ${tools}</p>` : ""}</div>`;
 }
 
 function chartHTML(content, toolEvents) {
@@ -1422,6 +1439,7 @@ async function sendMessage(text, opts = {}) {
       invariants: data.memory?.invariants,
       steps: data.steps,
       toolEvents: data.tool_events,
+      help: data.help,
     });
     renderMemoryMeta(data.memory);
     history.push({ role: "user", content: text });
@@ -1662,7 +1680,37 @@ window.addEventListener("offline", updateNetBanner);
 setDebugMode(debugEnabled);
 setSettingsOpen(false);
 updateNetBanner();
+document.querySelectorAll("[data-help]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const text = btn.getAttribute("data-help");
+    if (text && !isLoading) sendMessage(text);
+  });
+});
+
+async function loadHelpStatus(attempt = 0) {
+  const el = document.getElementById("helpStatus");
+  if (!el) return;
+  try {
+    const res = await fetch("/api/help");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.ready) {
+      el.textContent = data.mode === "off" ? "RAG выключен." : "Индекс RAG строится…";
+      if (data.mode !== "off" && attempt < 8) {
+        setTimeout(() => loadHelpStatus(attempt + 1), 2000);
+      }
+      return;
+    }
+    const files = Array.isArray(data.files) ? data.files.length : 0;
+    const mcp = Array.isArray(data.mcp) && data.mcp.length ? data.mcp.join(", ") : "MCP не подключён";
+    el.textContent = `${data.mode}: ${data.chunks} фрагментов из ${files} файлов. ${mcp}.`;
+  } catch {
+    el.textContent = "Индекс RAG недоступен.";
+  }
+}
+
 Promise.all([loadProviders(), loadMemory(), loadHistory(), loadProfiles()]).then(() => {
   restoreUnsent();
+  loadHelpStatus();
   inputEl.focus();
 });

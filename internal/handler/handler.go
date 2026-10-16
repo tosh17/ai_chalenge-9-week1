@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/tosh17/deepseek-service/internal/agent"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
+	"github.com/tosh17/deepseek-service/internal/help"
 	"github.com/tosh17/deepseek-service/internal/memory"
 	"github.com/tosh17/deepseek-service/internal/tokens"
 )
@@ -15,6 +17,7 @@ type Handler struct {
 	agent *agent.Agent
 	full  *agent.Agent // optional day9 dual
 	model string
+	guide *help.Assistant
 }
 
 func New(a *agent.Agent, model string) *Handler {
@@ -23,6 +26,12 @@ func New(a *agent.Agent, model string) *Handler {
 
 func NewDual(compress, full *agent.Agent, model string) *Handler {
 	return &Handler{agent: compress, full: full, model: model}
+}
+
+func (h *Handler) SetGuide(guide *help.Assistant) {
+	if h != nil {
+		h.guide = guide
+	}
 }
 
 type chatRequestBody struct {
@@ -56,6 +65,7 @@ type chatResponseBody struct {
 	ToolEvents      []agent.ToolEvent          `json:"tool_events,omitempty"`
 	Steps           []agent.TurnStep           `json:"steps,omitempty"`
 	Debug           *deepseek.DebugInfo        `json:"debug,omitempty"`
+	Help            *help.Meta                 `json:"help,omitempty"`
 }
 
 type errorResponseBody struct {
@@ -119,6 +129,9 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 		payload["active_branch"] = mem.ActiveBranchID()
 		payload["checkpoint_at"] = mem.CheckpointAt()
 	}
+	if h.guide != nil {
+		payload["help"] = h.guide.Status()
+	}
 	writeJSON(w, http.StatusOK, payload)
 }
 
@@ -170,6 +183,11 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 	var req chatRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponseBody{Error: "invalid json body"})
+		return
+	}
+
+	if question, ok := help.Parse(req.Message); ok {
+		h.answerHelp(w, r, question, req.Provider)
 		return
 	}
 
@@ -667,6 +685,40 @@ func (h *Handler) MemoryWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.MemoryGet(w, r)
+}
+
+func (h *Handler) HelpStatus(w http.ResponseWriter, r *http.Request) {
+	if h.guide == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ready": false, "mode": "off"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.guide.Status())
+}
+
+func (h *Handler) answerHelp(w http.ResponseWriter, r *http.Request, question, provider string) {
+	if h.guide == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorResponseBody{Error: "ассистент документации выключен"})
+		return
+	}
+	ans, err := h.guide.Answer(r.Context(), help.Query{Text: question, Provider: provider})
+	if err != nil || strings.TrimSpace(ans.Reply) == "" {
+		msg := "help failed"
+		if err != nil {
+			msg = err.Error()
+		}
+		writeJSON(w, http.StatusBadGateway, errorResponseBody{Error: msg})
+		return
+	}
+	writeJSON(w, http.StatusOK, chatResponseBody{
+		Reply:      ans.Reply,
+		Agent:      "day31-help",
+		Provider:   ans.Provider,
+		Model:      ans.Model,
+		DurationMs: ans.DurationMs,
+		Tokens:     ans.Tokens,
+		Debug:      ans.Debug,
+		Help:       &ans.Meta,
+	})
 }
 
 func (h *Handler) Day30(w http.ResponseWriter, r *http.Request) {

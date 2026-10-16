@@ -16,8 +16,10 @@ import (
 	"github.com/tosh17/deepseek-service/internal/config"
 	"github.com/tosh17/deepseek-service/internal/deepseek"
 	"github.com/tosh17/deepseek-service/internal/handler"
+	"github.com/tosh17/deepseek-service/internal/help"
 	"github.com/tosh17/deepseek-service/internal/mcp"
 	"github.com/tosh17/deepseek-service/internal/memory"
+	"github.com/tosh17/deepseek-service/internal/rag"
 )
 
 func main() {
@@ -43,7 +45,7 @@ func main() {
 		profiles.ActiveID(), profiles.Active().Title, len(invariants.Enabled()))
 
 	deepseekClient := deepseek.NewClient(cfg.DeepSeekAPIKey, cfg.DeepSeekModel, cfg.DeepSeekURL)
-	chatAgent := agent.New("day30-local").
+	chatAgent := agent.New("day31-local").
 		WithSystemPrompt("Ты кулинарный помощник. Подбираешь блюдо из продуктов, которые назвал человек. Факты ищи только на английских страницах: web_search с английским запросом, затем web_fetch, затем translate_en_ru. Ответ человеку только по-русски, без иероглифов и без английских абзацев. Фото блюда — web_image, и сразу под этим блюдом поставь image_url отдельной строкой, без HTML. Блок-схему не рисуй сам. Граммы и минуты бери только из переведённого рецепта.").
 		WithLayers(layers).
 		WithProfiles(profiles).
@@ -67,8 +69,17 @@ func main() {
 		WithBackendLimit(agent.ProviderDeepSeek, "DeepSeek", cfg.DeepSeekModel, deepseekClient, cfg.ContextTokenLimit)
 
 	var mcpClients []*mcp.Client
+	var projectClient *mcp.Client
 	if cfg.MCPEnabled {
 		mcpClients = attachMCP(chatAgent, cfg)
+		client, err := startProjectMCP(cfg)
+		if err != nil {
+			log.Printf("mcp project off: %v", err)
+		} else {
+			projectClient = client
+			mcpClients = append(mcpClients, client)
+			log.Printf("mcp project: %v", toolNames(client))
+		}
 	}
 
 	if cfg.LocalEnabled {
@@ -81,6 +92,27 @@ func main() {
 	}
 
 	h := handler.New(chatAgent, cfg.DeepSeekModel)
+	if cfg.RAGEnabled {
+		root := cfg.ProjectRoot
+		if root == "" {
+			root, _ = os.Getwd()
+		}
+		index := rag.New(rag.Options{
+			Root:      root,
+			CachePath: cfg.RAGCachePath,
+			Model:     cfg.RAGEmbedModel,
+			OllamaURL: cfg.RAGOllamaURL,
+			Embedder:  rag.NewOllama(cfg.RAGOllamaURL, cfg.RAGEmbedModel),
+			TopK:      cfg.RAGTopK,
+		})
+		var tools help.Tools
+		if projectClient != nil {
+			tools = help.MCPTools{Client: projectClient}
+		}
+		guide := help.New(index, tools, chatAgent)
+		h.SetGuide(guide)
+		go warmRAG(guide)
+	}
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -108,6 +140,45 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
 	closeMCP(mcpClients)
+}
+
+func warmRAG(guide *help.Assistant) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := guide.Warm(ctx); err != nil {
+		log.Printf("rag: %v", err)
+		return
+	}
+	st := guide.Status()
+	log.Printf("rag: mode=%s chunks=%d files=%d mcp=%v", st.Mode, st.Chunks, len(st.Files), st.MCP)
+}
+
+func startProjectMCP(cfg *config.Config) (*mcp.Client, error) {
+	root := cfg.ProjectRoot
+	if root == "" {
+		var err error
+		root, err = os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	if err := os.Setenv("PROJECT_ROOT", root); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	bin := os.Getenv("MCP_BIN")
+	if bin == "" {
+		bin = filepath.Join("bin", "mcp")
+	}
+	if _, err := os.Stat(bin); err == nil {
+		return mcp.Start(ctx, bin, "project")
+	}
+	log.Printf("mcp project: %s missing, go run", bin)
+	return mcp.Start(ctx, "go", "run", "./cmd/mcp", "project")
 }
 
 func closeMCP(clients []*mcp.Client) {
