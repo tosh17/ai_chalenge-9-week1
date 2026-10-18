@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
+	"github.com/tosh17/deepseek-service/internal/dock"
 	"github.com/tosh17/deepseek-service/internal/files"
 	"github.com/tosh17/deepseek-service/internal/mcp"
 	"github.com/tosh17/deepseek-service/internal/rag"
@@ -27,6 +28,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "files" {
 		runFiles(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "docker" {
+		runDocker(os.Args[2:])
 		return
 	}
 	runServer()
@@ -82,6 +87,47 @@ func runFiles(args []string) {
 	log.Printf("files: written=%v", res.Files)
 }
 
+func runDocker(args []string) {
+	fs := flag.NewFlagSet("docker", flag.ExitOnError)
+	goal := fs.String("goal", "", "цель про контейнеры s1")
+	_ = fs.Parse(args)
+	if *goal == "" && fs.NArg() > 0 {
+		*goal = fs.Arg(0)
+	}
+	if *goal == "" {
+		log.Fatal("нужна цель: ops docker -goal \"Подними простую страницу на 18080\"")
+	}
+	res, err := dockerAssistant().Run(context.Background(), *goal)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(res.Reply)
+	log.Printf("docker: calls=%s", callNames(res.Calls))
+}
+
+func dockerAssistant() *dock.Assistant {
+	root := env("OPS_STACKS", filepath.Join("ops", "stacks"))
+	runner := s1.Exec{Host: os.Getenv("S1_HOST"), Timeout: 2 * time.Minute}
+	return &dock.Assistant{Chat: dockerChat{inner: completer()}, Tools: dock.Local{Tools: dock.Handlers(runner, root)}}
+}
+
+type dockerChat struct{ inner support.Chatter }
+
+func (d dockerChat) ChatTools(ctx context.Context, messages []deepseek.Message, tools []deepseek.Tool) (deepseek.ChatResult, error) {
+	if d.inner == nil {
+		return deepseek.ChatResult{}, fmt.Errorf("нет модели")
+	}
+	return d.inner.ChatTools(ctx, messages, tools)
+}
+
+func callNames(calls []dock.Call) string {
+	names := make([]string, 0, len(calls))
+	for _, call := range calls {
+		names = append(names, call.Name)
+	}
+	return strings.Join(names, ",")
+}
+
 type fileChat struct{ inner support.Chatter }
 
 func (f fileChat) ChatTools(ctx context.Context, messages []deepseek.Message, tools []deepseek.Tool) (deepseek.ChatResult, error) {
@@ -133,6 +179,23 @@ func runServer() {
 		}
 		root := env("OPS_ROOT", filepath.Join("ops", "configs"))
 		res, err := (&files.Assistant{Chat: fileChat{inner: completer()}, Tools: files.Local{Tools: files.Handlers(root)}}).Run(r.Context(), body.Goal)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, res)
+	})
+	mux.HandleFunc("POST /api/docker", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Goal string `json:"goal"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+		defer cancel()
+		res, err := dockerAssistant().Run(ctx, body.Goal)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, err.Error())
 			return

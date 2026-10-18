@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>День 34. Файлы настроек s1</title>
+  <title>День 35. Docker на s1</title>
   <style>
     :root {
       color-scheme: light;
@@ -98,8 +98,8 @@
 </head>
 <body>
   <main>
-    <h1>День 34. Файлы настроек s1</h1>
-    <p class="lead">Поддержка читает живые логи. Ниже ассистент сам открывает файлы настроек по цели и показывает diff.</p>
+    <h1>День 35. Docker на s1</h1>
+    <p class="lead">Ассистент смотрит живые контейнеры и образы. Новый контейнер только с именем ops- и портом 18080–18090.</p>
     <label for="q">Вопрос о сервисе</label>
     <textarea id="q">Почему Ollama пишет, что запрошенный контекст слишком большой для модели?</textarea>
     <div class="row">
@@ -110,6 +110,10 @@
     <label for="goal">Цель</label>
     <textarea id="goal">Приведи clone_url в конфиге раннера к CLONE_URL из services.env и допиши в compose.yml, что адрес сверен</textarea>
     <div class="row"><button id="fix" type="button">Выполнить цель</button></div>
+    <h2 class="section">Docker</h2>
+    <label for="docker">Цель</label>
+    <textarea id="docker">Покажи, что запущено, порекомендуй образ для простой страницы и подними его на порту 18080</textarea>
+    <div class="row"><button id="up" type="button">Выполнить</button></div>
     <section id="out" aria-live="polite"><p class="status">Ответ появится здесь.</p></section>
   </main>
   <script>
@@ -275,6 +279,16 @@
         pre.textContent = diff;
         out.appendChild(pre);
       }
+    };
+    document.getElementById("up").onclick = async () => {
+      showStatus("Смотрю контейнеры…");
+      const res = await fetch("/api/docker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: document.getElementById("docker").value })
+      });
+      const data = await res.json();
+      render(data.reply || data.Reply || answerText(data) || "Ответ не пришёл.");
     };
   </script>
 </body>

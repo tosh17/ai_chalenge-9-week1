@@ -26,6 +26,26 @@ func TestClosedSubcommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("rm must be refused")
 	}
+	if _, err := DemoRun("gitlab", "nginx:alpine", 18080); err == nil {
+		t.Fatal("gitlab name")
+	}
+	if _, err := DemoRun("ops-nginx", "nginx:latest", 18080); err == nil {
+		t.Fatal("image")
+	}
+	if _, err := DemoRun("ops-nginx", "nginx:alpine", 80); err == nil {
+		t.Fatal("port")
+	}
+	argv, err := DemoRun("ops-nginx", "nginx:alpine", 18080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkArgv(append(argv, "--privileged")); err == nil {
+		t.Fatal("privileged")
+	}
+	rm, err := DemoRemove("ops-nginx")
+	if err != nil || checkArgv(rm) != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRedact(t *testing.T) {
