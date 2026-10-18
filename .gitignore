@@ -2,3 +2,6 @@
 bin/
 *.exe
 data/
+.cursor/
+.omp/
+mcp/**/build/
