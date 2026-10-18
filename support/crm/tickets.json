@@ -1,0 +1,43 @@
+{
+  "tickets": [
+    {
+      "id": "TCK-210",
+      "user_id": "u-anna",
+      "service": "gitlab",
+      "status": "open",
+      "title": "Не открывается GitLab",
+      "body": "В браузере крутится страница на порту 8929.",
+      "facts": [
+        "адрес http://10.10.1.101:8929",
+        "контейнер gitlab",
+        "аккаунт в CRM не заблокирован"
+      ]
+    },
+    {
+      "id": "TCK-211",
+      "user_id": "u-igor",
+      "service": "ollama",
+      "status": "open",
+      "title": "Эмбеддинги зависают",
+      "body": "Запросы к nomic-embed-text не возвращаются.",
+      "facts": [
+        "порт 11434",
+        "контейнер ollama",
+        "модель nomic-embed-text"
+      ]
+    },
+    {
+      "id": "TCK-212",
+      "user_id": "u-anna",
+      "service": "gitlab-runner",
+      "status": "open",
+      "title": "Джоба ревью висит",
+      "body": "Пайплайн в GitLab долго в pending.",
+      "facts": [
+        "раннер local",
+        "concurrent = 1",
+        "джобы без тегов"
+      ]
+    }
+  ]
+}

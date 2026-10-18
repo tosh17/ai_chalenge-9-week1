@@ -3,30 +3,20 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/tosh17/deepseek-service/internal/mcpsrv"
+	"github.com/tosh17/deepseek-service/internal/s1"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: mcp translate|search|diagram|project")
+	if len(os.Args) < 2 || os.Args[1] != "s1" {
+		fmt.Fprintln(os.Stderr, "usage: mcp s1")
 		os.Exit(2)
 	}
-	switch os.Args[1] {
-	case "translate":
-		mcpsrv.Serve("translate", mcpsrv.TranslateTools(nil))
-	case "search":
-		mcpsrv.Serve("search", mcpsrv.SearchTools(nil))
-	case "diagram":
-		mcpsrv.Serve("diagram", mcpsrv.DiagramTools())
-	case "project":
-		root := os.Getenv("PROJECT_ROOT")
-		if root == "" {
-			root, _ = os.Getwd()
-		}
-		mcpsrv.Serve("project", mcpsrv.ProjectTools(root))
-	default:
-		fmt.Fprintf(os.Stderr, "unknown mcp %q\n", os.Args[1])
-		os.Exit(2)
+	dir := os.Getenv("SUPPORT_CRM")
+	if dir == "" {
+		dir = filepath.Join("support", "crm")
 	}
+	mcpsrv.Serve("s1", s1.Tools(s1.Exec{Host: os.Getenv("S1_HOST")}, dir))
 }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.openmeteo.mcp.MoonTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-26T23:38:13.885Z" hostname="MacBook-Pro-Anton.local" time="0.015">
+  <properties/>
+  <testcase name="knownNewMoonIsNearZero()" classname="dev.openmeteo.mcp.MoonTest" time="0.013"/>
+  <testcase name="halfSynodicMonthIsFull()" classname="dev.openmeteo.mcp.MoonTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

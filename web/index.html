@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>День 33. Поддержка s1</title>
+  <style>
+    :root { color-scheme: light; font-family: Georgia, serif; background: #f4f0e6; color: #1c1915; }
+    body { max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.6rem; }
+    button, textarea { font: inherit; }
+    textarea { width: 100%; min-height: 5rem; }
+    .row { display: flex; gap: .5rem; margin: .75rem 0; flex-wrap: wrap; }
+    button { background: #1c1915; color: #f4f0e6; border: 0; padding: .45rem .8rem; cursor: pointer; }
+    pre { white-space: pre-wrap; background: #fff; padding: 1rem; }
+    .muted { color: #5c564c; }
+  </style>
+</head>
+<body>
+  <h1>День 33. Поддержка s1</h1>
+  <p class="muted">Ассистент сам берёт тикет из CRM и логи контейнера на сервере. Вопрос можно задать без имени файла и без команды docker.</p>
+  <textarea id="q">TCK-210 Почему не открывается GitLab?</textarea>
+  <div class="row">
+    <button id="ask" type="button">Спросить</button>
+    <button id="ps" type="button">Что запущено</button>
+  </div>
+  <pre id="out">Ответ появится здесь.</pre>
+  <script>
+    const out = document.getElementById("out");
+    document.getElementById("ask").onclick = async () => {
+      out.textContent = "Смотрю тикет и логи…";
+      const res = await fetch("/api/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: document.getElementById("q").value })
+      });
+      const data = await res.json();
+      out.textContent = data.reply || data.error || JSON.stringify(data, null, 2);
+    };
+    document.getElementById("ps").onclick = async () => {
+      out.textContent = "Запрашиваю контейнеры…";
+      const res = await fetch("/api/services");
+      const data = await res.json();
+      out.textContent = data.services || data.error || JSON.stringify(data, null, 2);
+    };
+  </script>
+</body>
+</html>

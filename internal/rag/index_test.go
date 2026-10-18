@@ -91,7 +91,7 @@ func TestSearchSpreadsFiles(t *testing.T) {
 func TestLexicalSearchWithoutEmbedder(t *testing.T) {
 	root := filepath.Join("..", "..")
 	idx := New(Options{Root: root, Model: "lexical-test"})
-	hits, err := idx.Search(context.Background(), "nomic-embed-text команда help", 3)
+	hits, err := idx.Search(context.Background(), "nomic-embed-text ollama", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestLexicalSearchWithoutEmbedder(t *testing.T) {
 	}
 	found := false
 	for _, hit := range hits {
-		if strings.Contains(hit.Path, "assistant") || hit.Path == "README.md" {
+		if hit.Path == "docs/faq.md" || hit.Path == "README.md" {
 			found = true
 		}
 	}

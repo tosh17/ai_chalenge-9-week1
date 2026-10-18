@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.openmeteo.mcp.MediaTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-26T23:38:12.821Z" hostname="MacBook-Pro-Anton.local" time="1.057">
+  <properties/>
+  <testcase name="searchSummarizeAndChartPassTheSameTotals()" classname="dev.openmeteo.mcp.MediaTest" time="1.057"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
