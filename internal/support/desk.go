@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
@@ -12,23 +11,21 @@ import (
 	"github.com/tosh17/deepseek-service/internal/rag"
 )
 
-const systemPrompt = `Ты поддержка домашнего сервера s1. Отвечай по-русски.
-Сначала возьми тикет и карточку пользователя, потом статус и логи названного сервиса.
+const systemPrompt = `Ты поддержка домашнего сервера s1. Пользователь спрашивает о реальном сервисе, номера тикета нет.
+Сначала вызови list_services, затем service_status и service_logs контейнера, о котором вопрос.
 Не выдумывай строки логов и статус, которых нет в инструментах.
-Ответ строго из двух разделов:
+Ответ по-русски, коротко, без дампа логов. Два раздела:
 ## Причина
 ## Рекомендация`
 
 const maxRounds = 6
-
-var ticketRE = regexp.MustCompile(`(?i)\bTCK-\d+\b`)
 
 // Chatter — модель, которая может вызвать инструменты.
 type Chatter interface {
 	ChatTools(ctx context.Context, messages []deepseek.Message, tools []deepseek.Tool) (deepseek.ChatResult, error)
 }
 
-// Tools — MCP: CRM и команды на s1.
+// Tools — команды на s1.
 type Tools interface {
 	Definitions() []deepseek.Tool
 	Call(ctx context.Context, name, arguments string) (string, error)
@@ -62,33 +59,27 @@ func (l Local) Call(_ context.Context, name, arguments string) (string, error) {
 
 // Call — один вызов.
 type Call struct {
-	Name      string
-	Arguments string
-	Result    string
-	Err       string
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Result    string `json:"result"`
+	Err       string `json:"err,omitempty"`
 }
 
 // Answer — ответ пользователю.
 type Answer struct {
-	Reply   string
-	Ticket  string
-	Calls   []Call
-	Sources []string
+	Reply   string   `json:"reply"`
+	Calls   []Call   `json:"calls,omitempty"`
+	Sources []string `json:"sources,omitempty"`
 }
 
-// Desk собирает тикет, логи s1 и FAQ.
+// Desk собирает логи s1 и FAQ.
 type Desk struct {
 	Index *rag.Index
 	Chat  Chatter
 	Tools Tools
 }
 
-// TicketID достаёт номер из текста.
-func TicketID(text string) string {
-	return strings.ToUpper(ticketRE.FindString(text))
-}
-
-// Reply отвечает на вопрос поддержки.
+// Reply отвечает на вопрос по живым логам s1.
 func (d *Desk) Reply(ctx context.Context, question string) (Answer, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
@@ -148,38 +139,21 @@ func (d *Desk) Reply(ctx context.Context, question string) (Answer, error) {
 	if strings.TrimSpace(reply) == "" {
 		reply = extractive(question, calls, nil)
 	}
-	return Answer{Reply: strings.TrimSpace(reply), Ticket: TicketID(question), Calls: calls, Sources: sources}, nil
+	return Answer{Reply: strings.TrimSpace(reply), Calls: calls, Sources: sources}, nil
 }
 
 func (d *Desk) fallback(ctx context.Context, question string) []Call {
 	var calls []Call
-	id := TicketID(question)
-	var ticket struct {
-		UserID  string `json:"user_id"`
-		Service string `json:"service"`
-	}
-	if id != "" {
-		raw, err := d.Tools.Call(ctx, "get_ticket", fmt.Sprintf(`{"id":%q}`, id))
-		calls = append(calls, done("get_ticket", fmt.Sprintf(`{"id":%q}`, id), raw, err))
-		_ = json.Unmarshal([]byte(raw), &ticket)
-		if ticket.UserID != "" {
-			args := fmt.Sprintf(`{"id":%q}`, ticket.UserID)
-			raw, err = d.Tools.Call(ctx, "get_user", args)
-			calls = append(calls, done("get_user", args, raw, err))
-		}
-	}
 	raw, err := d.Tools.Call(ctx, "list_services", "{}")
 	calls = append(calls, done("list_services", "{}", raw, err))
-	name := ticket.Service
-	if name == "" {
-		name = guessService(question)
-	}
+	name := guessService(question)
 	if name != "" {
-		args := fmt.Sprintf(`{"name":%q,"tail":80}`, name)
-		raw, err = d.Tools.Call(ctx, "service_status", fmt.Sprintf(`{"name":%q}`, name))
-		calls = append(calls, done("service_status", fmt.Sprintf(`{"name":%q}`, name), raw, err))
-		raw, err = d.Tools.Call(ctx, "service_logs", args)
-		calls = append(calls, done("service_logs", args, raw, err))
+		statusArgs := fmt.Sprintf(`{"name":%q}`, name)
+		raw, err = d.Tools.Call(ctx, "service_status", statusArgs)
+		calls = append(calls, done("service_status", statusArgs, raw, err))
+		logArgs := fmt.Sprintf(`{"name":%q,"tail":80}`, name)
+		raw, err = d.Tools.Call(ctx, "service_logs", logArgs)
+		calls = append(calls, done("service_logs", logArgs, raw, err))
 	}
 	return calls
 }
@@ -235,7 +209,7 @@ func guessService(question string) string {
 	switch {
 	case strings.Contains(q, "gitlab") || strings.Contains(q, "гит"):
 		return "gitlab"
-	case strings.Contains(q, "ollama") || strings.Contains(q, "эмбед"):
+	case strings.Contains(q, "ollama") || strings.Contains(q, "эмбед") || strings.Contains(q, "контекст") || strings.Contains(q, "nomic"):
 		return "ollama"
 	case strings.Contains(q, "runner") || strings.Contains(q, "раннер") || strings.Contains(q, "джоб"):
 		return "gitlab-runner"

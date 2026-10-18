@@ -29,13 +29,13 @@ func main() {
 
 func runSupport(args []string) {
 	fs := flag.NewFlagSet("support", flag.ExitOnError)
-	q := fs.String("q", "", "вопрос, можно с номером тикета")
+	q := fs.String("q", "", "вопрос о сервисе на s1")
 	_ = fs.Parse(args)
 	if *q == "" && fs.NArg() > 0 {
 		*q = fs.Arg(0)
 	}
 	if *q == "" {
-		log.Fatal("нужен вопрос: ops support -q \"TCK-210 Почему не открывается GitLab?\"")
+		log.Fatal("нужен вопрос: ops support -q \"Почему Ollama пишет, что контекст слишком большой?\"")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -48,12 +48,12 @@ func runSupport(args []string) {
 	for _, call := range ans.Calls {
 		names = append(names, call.Name)
 	}
-	log.Printf("support: ticket=%s tools=%v sources=%v", ans.Ticket, names, ans.Sources)
+	log.Printf("support: tools=%v sources=%v", names, ans.Sources)
 }
 
 func runServer() {
 	desk := newDesk(context.Background())
-	addr := ":" + env("OPS_PORT", "8095")
+	addr := env("OPS_ADDR", ":"+env("OPS_PORT", "8095"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join("web", "index.html"))
@@ -90,16 +90,18 @@ func runServer() {
 }
 
 func newDesk(ctx context.Context) *support.Desk {
-	crm, _ := filepath.Abs(filepath.Join("support", "crm"))
-	_ = os.Setenv("SUPPORT_CRM", crm)
 	host := os.Getenv("S1_HOST")
-	client, err := mcp.Start(ctx, "go", "run", "./cmd/mcp", "s1")
 	var tools support.Tools
-	if err != nil {
-		log.Printf("mcp off, in-process: %v", err)
-		tools = support.Local{Tools: s1.Tools(s1.Exec{Host: host}, crm)}
+	if os.Getenv("OPS_INPROCESS") == "1" {
+		tools = support.Local{Tools: s1.Tools(s1.Exec{Host: host})}
 	} else {
-		tools = mcpTools{client: client}
+		client, err := mcp.Start(ctx, "go", "run", "./cmd/mcp", "s1")
+		if err != nil {
+			log.Printf("mcp off, in-process: %v", err)
+			tools = support.Local{Tools: s1.Tools(s1.Exec{Host: host})}
+		} else {
+			tools = mcpTools{client: client}
+		}
 	}
 	root, _ := os.Getwd()
 	ollama := env("RAG_OLLAMA_URL", "http://10.10.1.101:11434")

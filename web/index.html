@@ -5,43 +5,238 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>День 33. Поддержка s1</title>
   <style>
-    :root { color-scheme: light; font-family: Georgia, serif; background: #f4f0e6; color: #1c1915; }
-    body { max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
-    h1 { font-size: 1.6rem; }
-    button, textarea { font: inherit; }
-    textarea { width: 100%; min-height: 5rem; }
-    .row { display: flex; gap: .5rem; margin: .75rem 0; flex-wrap: wrap; }
-    button { background: #1c1915; color: #f4f0e6; border: 0; padding: .45rem .8rem; cursor: pointer; }
-    pre { white-space: pre-wrap; background: #fff; padding: 1rem; }
-    .muted { color: #5c564c; }
+    :root {
+      color-scheme: light;
+      --bg: #f6f3ec;
+      --ink: #1c1915;
+      --muted: #3d3832;
+      --line: #d8d1c4;
+      --paper: #fffcf7;
+      --head: #2c4a3e;
+    }
+    html { font-size: 18px; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+      line-height: 1.55;
+    }
+    main { max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    h1 { font-size: 1.65rem; line-height: 1.25; margin: 0 0 .6rem; }
+    .lead { margin: 0 0 1.4rem; color: var(--muted); }
+    label { display: block; font-weight: 650; margin-bottom: .4rem; }
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 5.5rem;
+      padding: .8rem .9rem;
+      font: inherit;
+      line-height: 1.45;
+      color: var(--ink);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      resize: vertical;
+    }
+    .row { display: flex; gap: .6rem; margin: .8rem 0 0; flex-wrap: wrap; }
+    button {
+      font: inherit;
+      font-size: 1rem;
+      background: #1c1915;
+      color: #f6f3ec;
+      border: 0;
+      border-radius: 8px;
+      padding: .55rem 1rem;
+      cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    #out {
+      margin-top: 1.4rem;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1rem 1.15rem 1.15rem;
+    }
+    #out h2 { font-size: 1.2rem; line-height: 1.3; color: var(--head); margin: 1.1rem 0 .35rem; }
+    #out h2:first-child { margin-top: 0; }
+    #out p { margin: .35rem 0 .75rem; }
+    #out ul, #out ol { margin: .2rem 0 .9rem; padding-left: 1.3rem; }
+    #out li { margin: .35rem 0; }
+    code { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .92em; background: #efeae0; padding: .05em .35em; border-radius: 4px; }
+    .table-wrap { overflow-x: auto; margin: .4rem 0 1rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: .55rem .45rem;
+      border-bottom: 1px solid var(--line);
+    }
+    th { font-size: .85rem; letter-spacing: .02em; color: var(--muted); font-weight: 650; }
+    .svc { padding: .85rem 0; border-bottom: 1px solid var(--line); }
+    .svc:first-child { padding-top: .2rem; }
+    .svc b { display: block; font-size: 1.05rem; }
+    .svc i { display: block; margin-top: .15rem; font-style: normal; color: var(--muted); }
+    @media (min-width: 720px) {
+      .svc { display: grid; grid-template-columns: 12rem 11rem minmax(0, 1fr); gap: .4rem 1rem; align-items: baseline; }
+      .svc b, .svc i { display: block; margin: 0; }
+    }
+    .status { color: var(--muted); margin: 0; }
   </style>
 </head>
 <body>
-  <h1>День 33. Поддержка s1</h1>
-  <p class="muted">Ассистент сам берёт тикет из CRM и логи контейнера на сервере. Вопрос можно задать без имени файла и без команды docker.</p>
-  <textarea id="q">TCK-210 Почему не открывается GitLab?</textarea>
-  <div class="row">
-    <button id="ask" type="button">Спросить</button>
-    <button id="ps" type="button">Что запущено</button>
-  </div>
-  <pre id="out">Ответ появится здесь.</pre>
+  <main>
+    <h1>День 33. Поддержка s1</h1>
+    <p class="lead">Ассистент читает живые логи контейнера на s1 и отвечает причиной и рекомендацией.</p>
+    <label for="q">Вопрос</label>
+    <textarea id="q">Почему Ollama пишет, что запрошенный контекст слишком большой для модели?</textarea>
+    <div class="row">
+      <button id="ask" type="button">Спросить</button>
+      <button id="ps" class="secondary" type="button">Что запущено</button>
+    </div>
+    <section id="out" aria-live="polite"><p class="status">Ответ появится здесь.</p></section>
+  </main>
   <script>
     const out = document.getElementById("out");
+
+    function esc(s) {
+      return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+
+    function inline(s) {
+      return esc(s)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    }
+
+    function answerText(data) {
+      if (!data || typeof data !== "object") return "";
+      return data.reply || data.Reply || data.error || data.Error || "";
+    }
+
+    function cellsOf(line) {
+      const markdown = line.trim().startsWith("|");
+      const parts = line.split("|").map((cell) => cell.trim());
+      if (!markdown) return parts;
+      if (parts[0] === "") parts.shift();
+      if (parts.length && parts[parts.length - 1] === "") parts.pop();
+      return parts;
+    }
+
+    function isRule(line) {
+      return /^\s*\|?\s*:?-{3,}/.test(line);
+    }
+
+    function table(lines) {
+      const markdown = lines.some(isRule);
+      const rows = lines.filter((line) => !isRule(line)).map(cellsOf);
+      if (!rows.length) return "";
+      if (!markdown) {
+        return rows.map((row) =>
+          '<div class="svc"><b>' + inline(row[0] || "") + "</b><i>" + inline(row[1] || "") + "</i><span>" + inline(row[2] || "порты не опубликованы") + "</span></div>"
+        ).join("");
+      }
+      const head = rows[0];
+      const body = rows.slice(1);
+      return '<div class="table-wrap"><table><tr>' +
+        head.map((cell) => "<th>" + inline(cell) + "</th>").join("") +
+        "</tr>" +
+        body.map((row) => "<tr>" + row.map((cell) => "<td>" + inline(cell) + "</td>").join("") + "</tr>").join("") +
+        "</table></div>";
+    }
+
+    function render(text) {
+      const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+      const filled = lines.map((line) => line.trim()).filter(Boolean);
+      if (filled.length > 1 && filled.every((line) => line.includes("|"))) {
+        out.innerHTML = table(filled);
+        return;
+      }
+      let html = "";
+      let para = [];
+      let list = [];
+      let listTag = "ul";
+      let grid = [];
+      const flushPara = () => {
+        if (!para.length) return;
+        html += "<p>" + inline(para.join(" ")) + "</p>";
+        para = [];
+      };
+      const flushList = () => {
+        if (!list.length) return;
+        html += "<" + listTag + ">" + list.map((item) => "<li>" + inline(item) + "</li>").join("") + "</" + listTag + ">";
+        list = [];
+      };
+      const pushItem = (tag, item) => {
+        if (list.length && listTag !== tag) flushList();
+        listTag = tag;
+        list.push(item);
+      };
+      const flushGrid = () => {
+        if (!grid.length) return;
+        html += table(grid);
+        grid = [];
+      };
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line) {
+          flushPara();
+          flushList();
+          flushGrid();
+          continue;
+        }
+        if (line.includes("|") && line.split("|").length > 2) {
+          flushPara();
+          flushList();
+          grid.push(line);
+          continue;
+        }
+        flushGrid();
+        if (line.startsWith("## ")) {
+          flushPara();
+          flushList();
+          html += "<h2>" + inline(line.slice(3)) + "</h2>";
+          continue;
+        }
+        if (/^[-*]\s+/.test(line)) {
+          flushPara();
+          pushItem("ul", line.replace(/^[-*]\s+/, ""));
+          continue;
+        }
+        if (/^\d+\.\s+/.test(line)) {
+          flushPara();
+          pushItem("ol", line.replace(/^\d+\.\s+/, ""));
+          continue;
+        }
+        flushList();
+        para.push(line);
+      }
+      flushPara();
+      flushList();
+      flushGrid();
+      out.innerHTML = html || '<p class="status">Пустой ответ.</p>';
+    }
+
+    function showStatus(text) {
+      out.innerHTML = "<p class=\"status\">" + esc(text) + "</p>";
+    }
+
     document.getElementById("ask").onclick = async () => {
-      out.textContent = "Смотрю тикет и логи…";
+      showStatus("Смотрю логи…");
       const res = await fetch("/api/support", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: document.getElementById("q").value })
       });
       const data = await res.json();
-      out.textContent = data.reply || data.error || JSON.stringify(data, null, 2);
+      const text = answerText(data);
+      render(text || "Ответ не пришёл.");
     };
     document.getElementById("ps").onclick = async () => {
-      out.textContent = "Запрашиваю контейнеры…";
+      showStatus("Запрашиваю контейнеры…");
       const res = await fetch("/api/services");
       const data = await res.json();
-      out.textContent = data.services || data.error || JSON.stringify(data, null, 2);
+      render(data.services || answerText(data) || "Список не пришёл.");
     };
   </script>
 </body>

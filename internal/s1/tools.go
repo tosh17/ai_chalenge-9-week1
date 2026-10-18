@@ -2,16 +2,12 @@ package s1
 
 import (
 	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/tosh17/deepseek-service/internal/mcpsrv"
 )
 
-// Tools — команды s1 и карточки CRM. Модель выбирает инструмент, сырой shell ей не отдаётся.
-func Tools(run Runner, crmDir string) []mcpsrv.Tool {
+// Tools — команды s1. Модель выбирает инструмент, сырой shell ей не отдаётся.
+func Tools(run Runner) []mcpsrv.Tool {
 	if run == nil {
 		run = Exec{}
 	}
@@ -57,71 +53,5 @@ func Tools(run Runner, crmDir string) []mcpsrv.Tool {
 				return run.Run(bg(), argv)
 			},
 		},
-		{
-			Name:        "get_ticket",
-			Description: "Тикет поддержки по id, например TCK-210. Бери сервис и факты отсюда.",
-			Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
-			Handle: func(args json.RawMessage) (string, error) {
-				var in struct {
-					ID string `json:"id"`
-				}
-				_ = json.Unmarshal(args, &in)
-				return lookup(crmDir, "tickets.json", "tickets", "id", in.ID)
-			},
-		},
-		{
-			Name:        "get_user",
-			Description: "Карточка пользователя CRM по id.",
-			Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
-			Handle: func(args json.RawMessage) (string, error) {
-				var in struct {
-					ID string `json:"id"`
-				}
-				_ = json.Unmarshal(args, &in)
-				return lookup(crmDir, "users.json", "users", "id", in.ID)
-			},
-		},
-		{
-			Name:        "list_tickets",
-			Description: "Все тикеты CRM.",
-			Schema:      json.RawMessage(`{"type":"object","properties":{}}`),
-			Handle: func(json.RawMessage) (string, error) {
-				return readRaw(filepath.Join(crmDir, "tickets.json"))
-			},
-		},
 	}
-}
-
-func lookup(dir, file, key, field, want string) (string, error) {
-	want = strings.TrimSpace(want)
-	if want == "" {
-		return "", fmt.Errorf("нужен %s", field)
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, file))
-	if err != nil {
-		return "", err
-	}
-	var doc map[string][]map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return "", err
-	}
-	for _, item := range doc[key] {
-		got, _ := item[field].(string)
-		if strings.EqualFold(got, want) {
-			out, err := json.Marshal(item)
-			if err != nil {
-				return "", err
-			}
-			return string(out), nil
-		}
-	}
-	return "", fmt.Errorf("%s %s не найден", key, want)
-}
-
-func readRaw(path string) (string, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
 }
