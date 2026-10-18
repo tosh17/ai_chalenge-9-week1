@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>День 33. Поддержка s1</title>
+  <title>День 34. Файлы настроек s1</title>
   <style>
     :root {
       color-scheme: light;
@@ -82,18 +82,34 @@
       .svc b, .svc i { display: block; margin: 0; }
     }
     .status { color: var(--muted); margin: 0; }
+    pre.diff {
+      margin: .8rem 0 0;
+      padding: .8rem;
+      overflow: auto;
+      background: #f3efe6;
+      border-radius: 8px;
+      font-family: ui-monospace, "SFMono-Regular", monospace;
+      font-size: .85rem;
+      line-height: 1.45;
+      white-space: pre;
+    }
+    h2.section { font-size: 1.2rem; margin: 1.8rem 0 .5rem; }
   </style>
 </head>
 <body>
   <main>
-    <h1>День 33. Поддержка s1</h1>
-    <p class="lead">Ассистент читает живые логи контейнера на s1 и отвечает причиной и рекомендацией.</p>
-    <label for="q">Вопрос</label>
+    <h1>День 34. Файлы настроек s1</h1>
+    <p class="lead">Поддержка читает живые логи. Ниже ассистент сам открывает файлы настроек по цели и показывает diff.</p>
+    <label for="q">Вопрос о сервисе</label>
     <textarea id="q">Почему Ollama пишет, что запрошенный контекст слишком большой для модели?</textarea>
     <div class="row">
       <button id="ask" type="button">Спросить</button>
       <button id="ps" class="secondary" type="button">Что запущено</button>
     </div>
+    <h2 class="section">Настройки</h2>
+    <label for="goal">Цель</label>
+    <textarea id="goal">Приведи clone_url в конфиге раннера к CLONE_URL из services.env и допиши в compose.yml, что адрес сверен</textarea>
+    <div class="row"><button id="fix" type="button">Выполнить цель</button></div>
     <section id="out" aria-live="polite"><p class="status">Ответ появится здесь.</p></section>
   </main>
   <script>
@@ -237,6 +253,28 @@
       const res = await fetch("/api/services");
       const data = await res.json();
       render(data.services || answerText(data) || "Список не пришёл.");
+    };
+    document.getElementById("fix").onclick = async () => {
+      showStatus("Ищу и правлю файлы…");
+      const res = await fetch("/api/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: document.getElementById("goal").value })
+      });
+      const data = await res.json();
+      const reply = data.reply || data.Reply || "";
+      const diff = data.diff || data.Diff || "";
+      if (!reply && !diff) {
+        render(answerText(data) || "Цель не выполнена.");
+        return;
+      }
+      render(reply || "Файлы обновлены.");
+      if (diff) {
+        const pre = document.createElement("pre");
+        pre.className = "diff";
+        pre.textContent = diff;
+        out.appendChild(pre);
+      }
     };
   </script>
 </body>

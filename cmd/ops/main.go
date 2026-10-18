@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
+	"github.com/tosh17/deepseek-service/internal/files"
 	"github.com/tosh17/deepseek-service/internal/mcp"
 	"github.com/tosh17/deepseek-service/internal/rag"
 	"github.com/tosh17/deepseek-service/internal/s1"
@@ -22,6 +23,10 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "support" {
 		runSupport(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "files" {
+		runFiles(os.Args[2:])
 		return
 	}
 	runServer()
@@ -49,6 +54,41 @@ func runSupport(args []string) {
 		names = append(names, call.Name)
 	}
 	log.Printf("support: tools=%v sources=%v", names, ans.Sources)
+}
+
+func runFiles(args []string) {
+	fs := flag.NewFlagSet("files", flag.ExitOnError)
+	goal := fs.String("goal", "", "цель, без указания открыть конкретный файл")
+	_ = fs.Parse(args)
+	if *goal == "" && fs.NArg() > 0 {
+		*goal = fs.Arg(0)
+	}
+	if *goal == "" {
+		log.Fatal("нужна цель: ops files -goal \"Приведи clone_url в конфиге раннера к CLONE_URL из services.env\"")
+	}
+	root := env("OPS_ROOT", filepath.Join("ops", "configs"))
+	res, err := (&files.Assistant{
+		Chat:  fileChat{inner: completer()},
+		Tools: files.Local{Tools: files.Handlers(root)},
+	}).Run(context.Background(), *goal)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(res.Reply)
+	if res.Diff != "" {
+		fmt.Println()
+		fmt.Println(res.Diff)
+	}
+	log.Printf("files: written=%v", res.Files)
+}
+
+type fileChat struct{ inner support.Chatter }
+
+func (f fileChat) ChatTools(ctx context.Context, messages []deepseek.Message, tools []deepseek.Tool) (deepseek.ChatResult, error) {
+	if f.inner == nil {
+		return deepseek.ChatResult{}, fmt.Errorf("нет модели")
+	}
+	return f.inner.ChatTools(ctx, messages, tools)
 }
 
 func runServer() {
@@ -82,6 +122,22 @@ func runServer() {
 			return
 		}
 		writeJSON(w, map[string]string{"services": text})
+	})
+	mux.HandleFunc("POST /api/files", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Goal string `json:"goal"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid json")
+			return
+		}
+		root := env("OPS_ROOT", filepath.Join("ops", "configs"))
+		res, err := (&files.Assistant{Chat: fileChat{inner: completer()}, Tools: files.Local{Tools: files.Handlers(root)}}).Run(r.Context(), body.Goal)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, res)
 	})
 	log.Printf("ops listening on %s host=%s", addr, os.Getenv("S1_HOST"))
 	if err := http.ListenAndServe(addr, mux); err != nil {
