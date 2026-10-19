@@ -13,7 +13,9 @@
       --line: #d8d1c4;
       --paper: #fffcf7;
       --head: #2c4a3e;
+      --user: #2c4a3e;
     }
+    html, body { height: 100%; }
     html { font-size: 18px; }
     body {
       margin: 0;
@@ -22,102 +24,103 @@
       font-family: "Segoe UI", "Helvetica Neue", sans-serif;
       line-height: 1.55;
     }
-    main { max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
-    h1 { font-size: 1.65rem; line-height: 1.25; margin: 0 0 .6rem; }
-    .lead { margin: 0 0 1.4rem; color: var(--muted); }
-    label { display: block; font-weight: 650; margin-bottom: .4rem; }
-    textarea {
-      width: 100%;
+    main {
+      max-width: 44rem;
+      height: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem 1rem 0;
       box-sizing: border-box;
-      min-height: 5.5rem;
-      padding: .8rem .9rem;
+    }
+    header { padding: .4rem .2rem 1rem; }
+    h1 { font-size: 1.45rem; line-height: 1.25; margin: 0 0 .35rem; }
+    .lead { margin: 0; color: var(--muted); }
+    #log {
+      flex: 1;
+      overflow: auto;
+      padding: .2rem .1rem 1rem;
+    }
+    .msg { display: flex; margin: .55rem 0; }
+    .msg.user { justify-content: flex-end; }
+    .bubble {
+      max-width: 92%;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: .75rem .95rem;
+    }
+    .msg.user .bubble {
+      background: var(--user);
+      color: #f6f3ec;
+      border-color: var(--user);
+    }
+    .bubble p { margin: .3rem 0 .65rem; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble h2 { font-size: 1.15rem; line-height: 1.3; color: var(--head); margin: .8rem 0 .3rem; }
+    .bubble ul, .bubble ol { margin: .2rem 0 .8rem; padding-left: 1.3rem; }
+    code { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .92em; background: #efeae0; padding: .05em .35em; border-radius: 4px; }
+    .svc { padding: .7rem 0; border-bottom: 1px solid var(--line); }
+    .svc:first-child { padding-top: .1rem; }
+    .svc:last-child { border-bottom: 0; padding-bottom: .1rem; }
+    .svc b { display: block; font-size: 1.05rem; }
+    .svc i { display: block; margin-top: .1rem; font-style: normal; color: var(--muted); }
+    @media (min-width: 720px) {
+      .svc { display: grid; grid-template-columns: 12rem 11rem minmax(0, 1fr); gap: .3rem 1rem; align-items: baseline; }
+      .svc b, .svc i { display: block; margin: 0; }
+    }
+    .status { color: var(--muted); margin: 0; }
+    form {
+      display: flex;
+      gap: .5rem;
+      align-items: flex-end;
+      padding: .8rem 0 1rem;
+      background: var(--bg);
+    }
+    textarea {
+      flex: 1;
+      box-sizing: border-box;
+      min-height: 2.8rem;
+      max-height: 8rem;
+      padding: .65rem .85rem;
       font: inherit;
-      line-height: 1.45;
+      line-height: 1.4;
       color: var(--ink);
       background: var(--paper);
       border: 1px solid var(--line);
-      border-radius: 10px;
-      resize: vertical;
+      border-radius: 12px;
+      resize: none;
     }
-    .row { display: flex; gap: .6rem; margin: .8rem 0 0; flex-wrap: wrap; }
     button {
       font: inherit;
       font-size: 1rem;
       background: #1c1915;
       color: #f6f3ec;
       border: 0;
-      border-radius: 8px;
-      padding: .55rem 1rem;
+      border-radius: 12px;
+      padding: .65rem 1rem;
       cursor: pointer;
     }
-    button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
-    #out {
-      margin-top: 1.4rem;
-      background: var(--paper);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 1rem 1.15rem 1.15rem;
-    }
-    #out h2 { font-size: 1.2rem; line-height: 1.3; color: var(--head); margin: 1.1rem 0 .35rem; }
-    #out h2:first-child { margin-top: 0; }
-    #out p { margin: .35rem 0 .75rem; }
-    #out ul, #out ol { margin: .2rem 0 .9rem; padding-left: 1.3rem; }
-    #out li { margin: .35rem 0; }
-    code { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: .92em; background: #efeae0; padding: .05em .35em; border-radius: 4px; }
-    .table-wrap { overflow-x: auto; margin: .4rem 0 1rem; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td {
-      text-align: left;
-      vertical-align: top;
-      padding: .55rem .45rem;
-      border-bottom: 1px solid var(--line);
-    }
-    th { font-size: .85rem; letter-spacing: .02em; color: var(--muted); font-weight: 650; }
-    .svc { padding: .85rem 0; border-bottom: 1px solid var(--line); }
-    .svc:first-child { padding-top: .2rem; }
-    .svc b { display: block; font-size: 1.05rem; }
-    .svc i { display: block; margin-top: .15rem; font-style: normal; color: var(--muted); }
-    @media (min-width: 720px) {
-      .svc { display: grid; grid-template-columns: 12rem 11rem minmax(0, 1fr); gap: .4rem 1rem; align-items: baseline; }
-      .svc b, .svc i { display: block; margin: 0; }
-    }
-    .status { color: var(--muted); margin: 0; }
-    pre.diff {
-      margin: .8rem 0 0;
-      padding: .8rem;
-      overflow: auto;
-      background: #f3efe6;
-      border-radius: 8px;
-      font-family: ui-monospace, "SFMono-Regular", monospace;
-      font-size: .85rem;
-      line-height: 1.45;
-      white-space: pre;
-    }
-    h2.section { font-size: 1.2rem; margin: 1.8rem 0 .5rem; }
+    button:disabled { opacity: .55; cursor: default; }
   </style>
 </head>
 <body>
   <main>
-    <h1>День 35. Docker на s1</h1>
-    <p class="lead">Ассистент смотрит живые контейнеры и образы. Новый контейнер только с именем ops- и портом 18080–18090.</p>
-    <label for="q">Вопрос о сервисе</label>
-    <textarea id="q">Почему Ollama пишет, что запрошенный контекст слишком большой для модели?</textarea>
-    <div class="row">
-      <button id="ask" type="button">Спросить</button>
-      <button id="ps" class="secondary" type="button">Что запущено</button>
-    </div>
-    <h2 class="section">Настройки</h2>
-    <label for="goal">Цель</label>
-    <textarea id="goal">Приведи clone_url в конфиге раннера к CLONE_URL из services.env и допиши в compose.yml, что адрес сверен</textarea>
-    <div class="row"><button id="fix" type="button">Выполнить цель</button></div>
-    <h2 class="section">Docker</h2>
-    <label for="docker">Цель</label>
-    <textarea id="docker">Покажи, что запущено, порекомендуй образ для простой страницы и подними его на порту 18080</textarea>
-    <div class="row"><button id="up" type="button">Выполнить</button></div>
-    <section id="out" aria-live="polite"><p class="status">Ответ появится здесь.</p></section>
+    <header>
+      <h1>День 35. Docker на s1</h1>
+      <p class="lead">Пиши своими словами. Если непонятно, ассистент спросит, а не вывалит весь список.</p>
+    </header>
+    <div id="log" aria-live="polite"></div>
+    <form id="composer">
+      <textarea id="docker" rows="1" placeholder="Например: что это board"></textarea>
+      <button id="send" type="submit">Отправить</button>
+    </form>
   </main>
   <script>
-    const out = document.getElementById("out");
+    const log = document.getElementById("log");
+    const field = document.getElementById("docker");
+    const sendBtn = document.getElementById("send");
+    const turns = [];
 
     function esc(s) {
       return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -129,11 +132,6 @@
         .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     }
 
-    function answerText(data) {
-      if (!data || typeof data !== "object") return "";
-      return data.reply || data.Reply || data.error || data.Error || "";
-    }
-
     function cellsOf(line) {
       const markdown = line.trim().startsWith("|");
       const parts = line.split("|").map((cell) => cell.trim());
@@ -143,35 +141,17 @@
       return parts;
     }
 
-    function isRule(line) {
-      return /^\s*\|?\s*:?-{3,}/.test(line);
-    }
-
     function table(lines) {
-      const markdown = lines.some(isRule);
-      const rows = lines.filter((line) => !isRule(line)).map(cellsOf);
-      if (!rows.length) return "";
-      if (!markdown) {
-        return rows.map((row) =>
-          '<div class="svc"><b>' + inline(row[0] || "") + "</b><i>" + inline(row[1] || "") + "</i><span>" + inline(row[2] || "порты не опубликованы") + "</span></div>"
-        ).join("");
-      }
-      const head = rows[0];
-      const body = rows.slice(1);
-      return '<div class="table-wrap"><table><tr>' +
-        head.map((cell) => "<th>" + inline(cell) + "</th>").join("") +
-        "</tr>" +
-        body.map((row) => "<tr>" + row.map((cell) => "<td>" + inline(cell) + "</td>").join("") + "</tr>").join("") +
-        "</table></div>";
+      const rows = lines.map(cellsOf);
+      return rows.map((row) =>
+        '<div class="svc"><b>' + inline(row[0] || "") + "</b><i>" + inline(row[1] || "") + "</i><span>" + inline(row[2] || "порты не опубликованы") + "</span></div>"
+      ).join("");
     }
 
-    function render(text) {
+    function renderHTML(text) {
       const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
       const filled = lines.map((line) => line.trim()).filter(Boolean);
-      if (filled.length > 1 && filled.every((line) => line.includes("|"))) {
-        out.innerHTML = table(filled);
-        return;
-      }
+      if (filled.length > 1 && filled.every((line) => line.includes("|"))) return table(filled);
       let html = "";
       let para = [];
       let list = [];
@@ -234,62 +214,66 @@
       flushPara();
       flushList();
       flushGrid();
-      out.innerHTML = html || '<p class="status">Пустой ответ.</p>';
+      return html || '<p class="status">Пустой ответ.</p>';
     }
 
-    function showStatus(text) {
-      out.innerHTML = "<p class=\"status\">" + esc(text) + "</p>";
+    function addBubble(role, html) {
+      const row = document.createElement("div");
+      row.className = "msg " + role;
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.innerHTML = html;
+      row.appendChild(bubble);
+      log.appendChild(row);
+      log.scrollTop = log.scrollHeight;
+      return bubble;
     }
 
-    document.getElementById("ask").onclick = async () => {
-      showStatus("Смотрю логи…");
-      const res = await fetch("/api/support", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: document.getElementById("q").value })
-      });
-      const data = await res.json();
-      const text = answerText(data);
-      render(text || "Ответ не пришёл.");
-    };
-    document.getElementById("ps").onclick = async () => {
-      showStatus("Запрашиваю контейнеры…");
-      const res = await fetch("/api/services");
-      const data = await res.json();
-      render(data.services || answerText(data) || "Список не пришёл.");
-    };
-    document.getElementById("fix").onclick = async () => {
-      showStatus("Ищу и правлю файлы…");
-      const res = await fetch("/api/files", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal: document.getElementById("goal").value })
-      });
-      const data = await res.json();
-      const reply = data.reply || data.Reply || "";
-      const diff = data.diff || data.Diff || "";
-      if (!reply && !diff) {
-        render(answerText(data) || "Цель не выполнена.");
-        return;
+    async function readJSON(res) {
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch (err) {
+        return { error: text || ("Ошибка " + res.status) };
       }
-      render(reply || "Файлы обновлены.");
-      if (diff) {
-        const pre = document.createElement("pre");
-        pre.className = "diff";
-        pre.textContent = diff;
-        out.appendChild(pre);
+    }
+
+    document.getElementById("composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      send();
+    });
+    field.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        send();
       }
-    };
-    document.getElementById("up").onclick = async () => {
-      showStatus("Смотрю контейнеры…");
-      const res = await fetch("/api/docker", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal: document.getElementById("docker").value })
-      });
-      const data = await res.json();
-      render(data.reply || data.Reply || answerText(data) || "Ответ не пришёл.");
-    };
+    });
+
+    async function send() {
+      const goal = field.value.trim();
+      if (!goal || sendBtn.disabled) return;
+      field.value = "";
+      addBubble("user", "<p>" + esc(goal) + "</p>");
+      const pending = addBubble("assistant", '<p class="status">Модель выбирает команду. Это может занять около полминуты.</p>');
+      sendBtn.disabled = true;
+      try {
+        const res = await fetch("/api/docker", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ goal, history: turns.slice(-8) })
+        });
+        const data = await readJSON(res);
+        const reply = data.reply || data.Reply || data.error || data.Error || "Ответ не пришёл.";
+        pending.innerHTML = renderHTML(reply);
+        turns.push({ role: "user", content: goal }, { role: "assistant", content: reply });
+      } catch (err) {
+        pending.innerHTML = '<p class="status">Запрос не выполнился: ' + esc(err) + "</p>";
+      } finally {
+        sendBtn.disabled = false;
+        field.focus();
+        log.scrollTop = log.scrollHeight;
+      }
+    }
   </script>
 </body>
 </html>

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
@@ -105,10 +106,32 @@ func runDocker(args []string) {
 	log.Printf("docker: calls=%s", callNames(res.Calls))
 }
 
+var (
+	dockerToolsOnce sync.Once
+	dockerToolsVal  dock.Tools
+)
+
 func dockerAssistant() *dock.Assistant {
-	root := env("OPS_STACKS", filepath.Join("ops", "stacks"))
-	runner := s1.Exec{Host: os.Getenv("S1_HOST"), Timeout: 2 * time.Minute}
-	return &dock.Assistant{Chat: dockerChat{inner: completer()}, Tools: dock.Local{Tools: dock.Handlers(runner, root)}}
+	return &dock.Assistant{Chat: dockerChat{inner: completer()}, Tools: dockerToolSet()}
+}
+
+func dockerToolSet() dock.Tools {
+	dockerToolsOnce.Do(func() {
+		root := env("OPS_STACKS", filepath.Join("ops", "stacks"))
+		runner := s1.Exec{Host: os.Getenv("S1_HOST"), Timeout: 2 * time.Minute}
+		if os.Getenv("OPS_INPROCESS") == "1" {
+			dockerToolsVal = dock.Local{Tools: dock.Handlers(runner, root)}
+			return
+		}
+		client, err := mcp.Start(context.Background(), "go", "run", "./cmd/mcp", "s1")
+		if err != nil {
+			log.Printf("mcp off, in-process: %v", err)
+			dockerToolsVal = dock.Local{Tools: dock.Handlers(runner, root)}
+			return
+		}
+		dockerToolsVal = mcpTools{client: client}
+	})
+	return dockerToolsVal
 }
 
 type dockerChat struct{ inner support.Chatter }
@@ -187,7 +210,8 @@ func runServer() {
 	})
 	mux.HandleFunc("POST /api/docker", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Goal string `json:"goal"`
+			Goal    string      `json:"goal"`
+			History []dock.Turn `json:"history"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, http.StatusBadRequest, "invalid json")
@@ -195,7 +219,7 @@ func runServer() {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 		defer cancel()
-		res, err := dockerAssistant().Run(ctx, body.Goal)
+		res, err := dockerAssistant().Reply(ctx, body.Goal, body.History)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, err.Error())
 			return

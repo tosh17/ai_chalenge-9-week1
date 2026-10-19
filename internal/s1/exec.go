@@ -61,7 +61,7 @@ func checkArgv(argv []string) error {
 		return fmt.Errorf("разрешён только sudo -n docker")
 	}
 	switch argv[3] {
-	case "ps", "logs", "inspect", "images":
+	case "ps", "logs", "inspect", "images", "stats":
 		for _, arg := range argv[4:] {
 			if !argRE.MatchString(arg) {
 				return fmt.Errorf("небезопасный аргумент")
@@ -190,6 +190,33 @@ func Status(name string) ([]string, error) {
 		return nil, fmt.Errorf("имя контейнера")
 	}
 	return []string{"sudo", "-n", "docker", "inspect", "--format", "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}", name}, nil
+}
+
+// Info — образ и состояние одного контейнера.
+func Info(name string) ([]string, error) {
+	if !nameRE.MatchString(name) {
+		return nil, fmt.Errorf("имя контейнера")
+	}
+	argv := []string{"sudo", "-n", "docker", "inspect", "--format", "{{.Config.Image}}|{{.State.Status}}|{{.State.StartedAt}}", name}
+	if err := checkArgv(argv); err != nil {
+		return nil, err
+	}
+	return argv, nil
+}
+
+// Stats — CPU и память. Пустое имя значит все контейнеры.
+func Stats(name string) ([]string, error) {
+	argv := []string{"sudo", "-n", "docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}"}
+	if name != "" {
+		if !nameRE.MatchString(name) {
+			return nil, fmt.Errorf("имя контейнера")
+		}
+		argv = append(argv, name)
+	}
+	if err := checkArgv(argv); err != nil {
+		return nil, err
+	}
+	return argv, nil
 }
 
 var secretRE = regexp.MustCompile(`(?i)(token|password|secret|api_key)(\s*[:=]\s*)\S+`)

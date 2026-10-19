@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/tosh17/deepseek-service/internal/deepseek"
@@ -13,12 +12,21 @@ import (
 	"github.com/tosh17/deepseek-service/internal/s1"
 )
 
-const systemPrompt = `Ты управляешь Docker на s1. Пользователь задаёт цель.
-Сначала вызови list_services и list_images. Рекомендуй только то, что увидел, либо nginx:alpine / alpine:3.20.
-Новый контейнер — только run_demo с именем ops-*. Не останавливай gitlab, ollama и runner.
-Удалять можно только remove_demo. В конце по-русски три заголовка: ## Что запущено, ## Рекомендация, ## Действие.`
+const systemPrompt = `Ты управляешь Docker на s1. Команду выбираешь сам и вызываешь инструмент MCP.
+Смотри на предыдущие реплики: в них уже может быть имя контейнера.
+Ресурсы, CPU, память и потребление — service_stats.
+Что это за контейнер, образ, статус, порты — service_info.
+Какие запущены — list_services.
+Новая пустая страница — run_demo: имя ops-*, образ nginx:alpine или alpine:3.20, порт 18080–18090.
+Удалять можно только remove_demo и только имя ops-*. GitLab, Ollama, runner и board не останавливай.
+Если из диалога неясно, что сделать, задай один короткий вопрос и не вызывай инструмент.
+Отвечай по-русски, только на вопрос. Не добавляй рекомендацию и блок «действие».`
 
-const maxRounds = 6
+const (
+	maxRounds   = 4
+	historyKeep = 8
+	historyMin  = 5
+)
 
 // Chatter вызывает инструменты.
 type Chatter interface {
@@ -65,7 +73,13 @@ type Result struct {
 	Calls []Call `json:"calls,omitempty"`
 }
 
-// Assistant подбирает образ и может поднять контейнер ops-.
+// Turn — реплика чата.
+type Turn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// Assistant отдаёт реплику модели, а выбранную команду — инструментам MCP.
 type Assistant struct {
 	Chat  Chatter
 	Tools Tools
@@ -73,6 +87,11 @@ type Assistant struct {
 
 // Run выполняет цель.
 func (a *Assistant) Run(ctx context.Context, goal string) (Result, error) {
+	return a.Reply(ctx, goal, nil)
+}
+
+// Reply отвечает на реплику. history — предыдущие реплики, на сервер уходит не меньше пяти, если они есть.
+func (a *Assistant) Reply(ctx context.Context, goal string, history []Turn) (Result, error) {
 	goal = strings.TrimSpace(goal)
 	if goal == "" {
 		return Result{}, fmt.Errorf("нужна цель")
@@ -80,160 +99,60 @@ func (a *Assistant) Run(ctx context.Context, goal string) (Result, error) {
 	if a.Tools == nil {
 		return Result{}, fmt.Errorf("инструменты не подключены")
 	}
+	if a.Chat == nil {
+		return Result{}, fmt.Errorf("модель не подключена")
+	}
+	messages := []deepseek.Message{{Role: "system", Content: systemPrompt}}
+	for _, turn := range recentHistory(history) {
+		messages = append(messages, deepseek.Message{Role: turn.Role, Content: turn.Content})
+	}
+	messages = append(messages, deepseek.Message{Role: "user", Content: goal})
 	var calls []Call
 	reply := ""
-	messages := []deepseek.Message{{Role: "system", Content: systemPrompt}, {Role: "user", Content: goal}}
-	if a.Chat != nil {
-		for round := 0; round < maxRounds; round++ {
-			res, err := a.Chat.ChatTools(ctx, messages, a.Tools.Definitions())
-			if err != nil {
-				break
+	for round := 0; round < maxRounds; round++ {
+		res, err := a.Chat.ChatTools(ctx, messages, a.Tools.Definitions())
+		if err != nil {
+			if reply == "" && len(calls) == 0 {
+				return Result{}, err
 			}
-			if len(res.ToolCalls) == 0 {
-				reply = strings.TrimSpace(res.Reply)
-				break
+			break
+		}
+		if len(res.ToolCalls) == 0 {
+			reply = strings.TrimSpace(res.Reply)
+			break
+		}
+		messages = append(messages, deepseek.Message{Role: "assistant", Content: res.Reply, ToolCalls: res.ToolCalls})
+		for _, call := range res.ToolCalls {
+			text, callErr := a.Tools.Call(ctx, call.Name, call.Arguments)
+			item := Call{Name: call.Name, Arguments: call.Arguments, Result: clip(text, 4000)}
+			if callErr != nil {
+				item.Err = callErr.Error()
+				text = callErr.Error()
 			}
-			messages = append(messages, deepseek.Message{Role: "assistant", Content: res.Reply, ToolCalls: res.ToolCalls})
-			for _, call := range res.ToolCalls {
-				text, callErr := a.Tools.Call(ctx, call.Name, call.Arguments)
-				item := Call{Name: call.Name, Arguments: call.Arguments, Result: text}
-				if callErr != nil {
-					item.Err = callErr.Error()
-					text = callErr.Error()
-				}
-				calls = append(calls, item)
-				messages = append(messages, deepseek.Message{Role: "tool", Name: call.Name, ToolCallID: call.ID, Content: clip(text, 4000)})
-			}
+			calls = append(calls, item)
+			messages = append(messages, deepseek.Message{Role: "tool", Name: call.Name, ToolCallID: call.ID, Content: clip(text, 4000)})
 		}
 	}
-	if !saw(calls, "list_services") {
-		calls = append(calls, a.fallback(ctx, goal)...)
-	}
-	if !hasHeadings(reply) {
-		reply = explain(goal, calls)
+	if strings.TrimSpace(reply) == "" {
+		reply = "Не понял, что сделать. Уточни, пожалуйста."
 	}
 	return Result{Reply: reply, Calls: calls}, nil
 }
 
-func (a *Assistant) fallback(ctx context.Context, goal string) []Call {
-	var calls []Call
-	for _, name := range []string{"list_services", "list_images"} {
-		text, err := a.Tools.Call(ctx, name, "{}")
-		calls = append(calls, Call{Name: name, Arguments: "{}", Result: text, Err: errString(err)})
-	}
-	lower := strings.ToLower(goal)
-	if wantsRemove(lower) {
-		name := demoName(goal)
-		raw, _ := json.Marshal(map[string]string{"name": name})
-		text, err := a.Tools.Call(ctx, "remove_demo", string(raw))
-		calls = append(calls, Call{Name: "remove_demo", Arguments: string(raw), Result: text, Err: errString(err)})
-		return calls
-	}
-	if !wantsStart(lower) {
-		return calls
-	}
-	image := "nginx:alpine"
-	if strings.Contains(lower, "alpine") && !strings.Contains(lower, "nginx") {
-		image = "alpine:3.20"
-	}
-	port := 18080
-	body := compose(image, port)
-	raw, _ := json.Marshal(map[string]string{"path": "ops-nginx.yml", "content": body})
-	text, err := a.Tools.Call(ctx, "write_file", string(raw))
-	calls = append(calls, Call{Name: "write_file", Arguments: string(raw), Result: text, Err: errString(err)})
-	runRaw, _ := json.Marshal(map[string]any{"name": "ops-nginx", "image": image, "port": port})
-	text, err = a.Tools.Call(ctx, "run_demo", string(runRaw))
-	calls = append(calls, Call{Name: "run_demo", Arguments: string(runRaw), Result: text, Err: errString(err)})
-	return calls
-}
-
-func wantsStart(goal string) bool {
-	if strings.Contains(goal, "не запускай") || strings.Contains(goal, "не поднимай") {
-		return false
-	}
-	return strings.Contains(goal, "подними") || strings.Contains(goal, "запусти") || strings.Contains(goal, "разверни")
-}
-
-func wantsRemove(goal string) bool {
-	return strings.Contains(goal, "убери") || strings.Contains(goal, "останови") || strings.Contains(goal, "удали")
-}
-
-func demoName(goal string) string {
-	if name := regexp.MustCompile(`ops-[a-z0-9-]{1,24}`).FindString(goal); name != "" {
-		return name
-	}
-	return "ops-nginx"
-}
-
-func compose(image string, port int) string {
-	inside := 80
-	if image == "alpine:3.20" {
-		inside = 8080
-	}
-	return fmt.Sprintf("services:\n  ops-nginx:\n    image: %s\n    restart: \"no\"\n    ports:\n      - \"10.10.1.101:%d:%d\"\n", image, port, inside)
-}
-
-func explain(goal string, calls []Call) string {
-	var b strings.Builder
-	b.WriteString("## Что запущено\n")
-	b.WriteString(textOf(calls, "list_services"))
-	b.WriteString("\n\n## Рекомендация\n")
-	if strings.Contains(textOf(calls, "list_images"), "nginx:alpine") {
-		b.WriteString("Для простой страницы бери уже лежащий nginx:alpine: он маленький и не заменяет GitLab или Ollama.\n")
-	} else {
-		b.WriteString("Для простой страницы подойдёт nginx:alpine. GitLab, Ollama и runner не трогай. Если образа ещё нет локально, первый запуск его скачает.\n")
-	}
-	b.WriteString("\n## Действие\n")
-	switch {
-	case saw(calls, "remove_demo"):
-		b.WriteString("Удалён учебный контейнер " + demoName(goal) + ".\n")
-	case saw(calls, "run_demo"):
-		b.WriteString("Записан ops-nginx.yml и поднят ops-nginx на http://10.10.1.101:18080.\n")
-	default:
-		b.WriteString("Ничего не запускал: в цели не было просьбы поднять контейнер.\n")
-	}
-	if errText := firstErr(calls); errText != "" {
-		b.WriteString("\nОшибка: " + errText + "\n")
-	}
-	return b.String()
-}
-
-func hasHeadings(reply string) bool {
-	return strings.Contains(reply, "## Что запущено") && strings.Contains(reply, "## Рекомендация")
-}
-
-func saw(calls []Call, name string) bool {
-	for _, call := range calls {
-		if call.Name == name && call.Err == "" {
-			return true
+func recentHistory(history []Turn) []Turn {
+	var out []Turn
+	for _, turn := range history {
+		role := strings.TrimSpace(turn.Role)
+		content := strings.TrimSpace(turn.Content)
+		if content == "" || (role != "user" && role != "assistant") {
+			continue
 		}
+		out = append(out, Turn{Role: role, Content: content})
 	}
-	return false
-}
-
-func textOf(calls []Call, name string) string {
-	for _, call := range calls {
-		if call.Name == name && call.Err == "" && strings.TrimSpace(call.Result) != "" {
-			return call.Result
-		}
+	if len(out) > historyKeep {
+		out = out[len(out)-historyKeep:]
 	}
-	return "пусто"
-}
-
-func firstErr(calls []Call) string {
-	for _, call := range calls {
-		if call.Err != "" {
-			return call.Name + ": " + call.Err
-		}
-	}
-	return ""
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
+	return out
 }
 
 func clip(s string, n int) string {
@@ -262,6 +181,40 @@ func Handlers(run s1.Runner, stackRoot string) []mcpsrv.Tool {
 			Schema:      json.RawMessage(`{"type":"object","properties":{}}`),
 			Handle: func(json.RawMessage) (string, error) {
 				return run.Run(context.Background(), s1.ListImages())
+			},
+		},
+		{
+			Name:        "service_info",
+			Description: "Образ, статус и время старта одного контейнера. Не CPU и не память.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`),
+			Handle: func(args json.RawMessage) (string, error) {
+				var in struct {
+					Name string `json:"name"`
+				}
+				if err := json.Unmarshal(args, &in); err != nil {
+					return "", err
+				}
+				argv, err := s1.Info(in.Name)
+				if err != nil {
+					return "", err
+				}
+				return run.Run(context.Background(), argv)
+			},
+		},
+		{
+			Name:        "service_stats",
+			Description: "CPU и память. Имя контейнера, если спрашивают про него. Без имени — все контейнеры.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}}}`),
+			Handle: func(args json.RawMessage) (string, error) {
+				var in struct {
+					Name string `json:"name"`
+				}
+				_ = json.Unmarshal(args, &in)
+				argv, err := s1.Stats(in.Name)
+				if err != nil {
+					return "", err
+				}
+				return run.Run(context.Background(), argv)
 			},
 		},
 		{
