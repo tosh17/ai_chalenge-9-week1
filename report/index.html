@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дообучение Qwen2.5-0.5B на text-to-SQL</title>
+<style>
+  :root {
+    --ink: #1c1915;
+    --muted: #5e584f;
+    --line: #e3dcd0;
+    --paper: #f7f4ee;
+    --card: #fffdf9;
+    --accent: #8d3b2f;
+    --better: #1f6b3a;
+    --better-bg: #e7f3ea;
+    --worse: #9c2f22;
+    --worse-bg: #fdecea;
+    --same: #5c564c;
+    --same-bg: #efeae2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 17px/1.55 "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+  }
+  main {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+  h1, h2, h3 { font-weight: 600; line-height: 1.25; }
+  h1 { font-size: 40px; margin: 0 0 12px; letter-spacing: -0.03em; }
+  h2 {
+    font-size: 26px;
+    margin: 48px 0 12px;
+    padding-top: 8px;
+  }
+  h3 { font-size: 15px; margin: 0 0 8px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); }
+  .lede { font-size: 20px; color: var(--muted); max-width: 42em; }
+  .meta { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin: 28px 0;
+  }
+  .fact {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .fact b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .fact span { color: var(--muted); font-size: 13px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    font-variant-numeric: tabular-nums;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th { font-size: 13px; color: var(--muted); font-weight: 600; }
+  figure {
+    margin: 18px 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  figure img { width: 100%; height: auto; display: block; }
+  figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #f3efe6;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    margin: 0;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    margin: 16px 0;
+  }
+  .card header { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .qid { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; }
+  .kind { color: var(--muted); font-size: 14px; }
+  .pill {
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 13px;
+    font-family: "Segoe UI", sans-serif;
+  }
+  .pill.лучше, .card.лучше { --mark: var(--better); }
+  .pill.лучше { background: var(--better-bg); color: var(--better); }
+  .pill.хуже { background: var(--worse-bg); color: var(--worse); }
+  .pill.так-же { background: var(--same-bg); color: var(--same); }
+  .card.хуже { border-color: #f0c7c1; }
+  .card.лучше { border-color: #cfe3d4; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 0.8fr;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .note { margin: 12px 0 0; color: var(--ink); }
+  .callout {
+    background: var(--card);
+    border-left: 4px solid var(--accent);
+    padding: 12px 16px;
+    margin: 16px 0;
+  }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.92em; }
+  @media (max-width: 800px) {
+    .facts, .grid { grid-template-columns: 1fr; }
+    h1 { font-size: 32px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta">AI Challenge · advanced, день 6 · 27 октября 2026</p>
+  <h1>Дообучение маленькой модели на text-to-SQL</h1>
+  <p class="lede">Qwen2.5-0.5B-Instruct дообучена LoRA на готовом датасете Hugging Face. Сравнение с базовой моделью — на 20 одних и тех же запросах. Обучение шло на s1, без видеокарты.</p>
+
+  <div class="facts">
+    <div class="fact"><b>8 / 14</b><span>точных SQL после LoRA. У базы — 0 / 14</span></div>
+    <div class="fact"><b>28 мин</b><span>само обучение, 100 шагов</span></div>
+    <div class="fact"><b>0.40 → 0.11</b><span>train loss, eval loss до 0.106</span></div>
+    <div class="fact"><b>5</b><span>запросов, где адаптер стал хуже</span></div>
+  </div>
+
+  <h2>Что требовалось</h2>
+  <p>Взять готовый датасет, где поведение модели меняется заметно: узкая роль и жёсткий формат ответа. Привести примеры к шаблону выбранной модели. Выбрать маленькую открытую модель под доступную память. Обучить LoRA или QLoRA, следить за лоссом, сохранить адаптер. Прогнать 20 запросов на базовой и дообученной модели и отдельно найти места, где стало хуже.</p>
+  <p>Датасет — <a href="https://huggingface.co/datasets/b-mc2/sql-create-context">b-mc2/sql-create-context</a>. Роль узкая: по схеме таблицы и вопросу ответить одним SQL-запросом. Формат жёсткий: без пояснений, с двойными кавычками и нижним регистром литералов, как в примерах.</p>
+
+  <h2>Что такое лосс</h2>
+  <p>Лосс — одно число, насколько вероятности модели расходятся с правильным продолжением. Здесь это cross-entropy только по токенам ответа. Схема и вопрос в лосс не входят: их токены помечены и модель за них не штрафуется. На каждом шаге она смотрит на эталонный SQL и получает штраф, если ставит ему низкую вероятность. Меньше лосс — ближе к примерам датасета.</p>
+  <div class="callout">Следили по логу Trainer. Каждые 5 шагов записан train loss, каждые 25 шагов — eval loss на 32 примерах, которые в обучение не входили. Цифры лежат в <code>loss.jsonl</code> на сервере, график — ниже.</div>
+  <p>Train loss на шаге 5 был 0.397 и к концу эпохи колебался около 0.05–0.15. Среднее по всему прогону — 0.130. Eval loss снижался рядом с ним: 0.124, затем 0.114, 0.107 и 0.106. Он не пошёл вверх, значит модель не просто зазубрила 400 обучающих примеров.</p>
+
+  <figure>
+    <img src="loss.png" alt="Кривая train loss и eval loss за 100 шагов">
+    <figcaption>Синяя линия скачет, потому что каждый train loss — это короткий кусок из нескольких примеров. Оранжевая — оценка на одной и той же отложенной выборке, она гладкая и падает.</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Шаг</th><th>Train loss</th><th>Eval loss</th></tr></thead>
+    <tbody>
+      <tr><td>5</td><td>0.397</td><td>—</td></tr><tr><td>10</td><td>0.176</td><td>—</td></tr><tr><td>15</td><td>0.173</td><td>—</td></tr><tr><td>20</td><td>0.137</td><td>—</td></tr><tr><td>25</td><td>0.113</td><td>0.124</td></tr><tr><td>30</td><td>0.202</td><td>—</td></tr><tr><td>35</td><td>0.095</td><td>—</td></tr><tr><td>40</td><td>0.137</td><td>—</td></tr><tr><td>45</td><td>0.075</td><td>—</td></tr><tr><td>50</td><td>0.145</td><td>0.114</td></tr><tr><td>55</td><td>0.154</td><td>—</td></tr><tr><td>60</td><td>0.129</td><td>—</td></tr><tr><td>65</td><td>0.105</td><td>—</td></tr><tr><td>70</td><td>0.049</td><td>—</td></tr><tr><td>75</td><td>0.106</td><td>0.107</td></tr><tr><td>80</td><td>0.097</td><td>—</td></tr><tr><td>85</td><td>0.110</td><td>—</td></tr><tr><td>90</td><td>0.058</td><td>—</td></tr><tr><td>95</td><td>0.045</td><td>—</td></tr><tr><td>100</td><td>0.105</td><td>0.106</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Модель и железо</h2>
+  <p>На s1 (<code>10.10.1.101</code>) нет NVIDIA, только встроенная графика Intel. Процессор — Intel Core i5-4278U, 2 ядра и 4 потока, 2.60 ГГц. Памяти 16 ГБ. QLoRA в 4-bit через bitsandbytes требует CUDA, поэтому обучали обычную LoRA в fp32.</p>
+  <p>Модель — <a href="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct">Qwen/Qwen2.5-0.5B-Instruct</a>, 495&nbsp;114&nbsp;112 параметров. В адаптере обучались 1&nbsp;081&nbsp;344 параметра, это 0.22%. Затронуты матрицы внимания <code>q_proj</code>, <code>k_proj</code>, <code>v_proj</code>, <code>o_proj</code>. Ранг LoRA 8, alpha 16, dropout 0.05.</p>
+  <p>Контейнер <code>lora-lab</code> на Python 3.12. Стек: torch 2.5.1+cpu, transformers 4.46.3, peft 0.13.2, datasets 3.1.0. Лимит контейнера — 6 ГБ памяти и 3 CPU, чтобы не задеть GitLab и Ollama на том же хосте. По факту обучение заняло около 2.3 ГБ.</p>
+
+  <h2>Параметры запуска</h2>
+  <table>
+    <tbody>
+      <tr><th>Датасет</th><td>b-mc2/sql-create-context, 78&nbsp;577 строк. После фильтра длины осталось 78&nbsp;550</td></tr>
+      <tr><th>Разбиение</th><td>400 train, 32 eval, 14 контрольных SQL. Перемешивание с seed 42. Контрольные вопросы взяты раньше обучающих и в обучение не входили</td></tr>
+      <tr><th>Длина</th><td>не длиннее 700 символов и 320 токенов</td></tr>
+      <tr><th>Эпоха</th><td>1</td></tr>
+      <tr><th>Шаги</th><td>100. Batch 1, накопление градиента 4</td></tr>
+      <tr><th>Оптимизатор</th><td>AdamW, learning rate 2e-4, cosine, warmup 5%, weight decay 0.01, max grad norm 1.0</td></tr>
+      <tr><th>Точность</th><td>fp32, градиентный чекпоинт включён</td></tr>
+      <tr><th>Генерация на сравнении</th><td>жадная, do_sample выключен. До 80 новых токенов на SQL и до 120 на обычных вопросах</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Сколько это заняло</h2>
+  <table>
+    <tbody>
+      <tr><th>Старт обучения</th><td>27 октября 2026, 22:30:35 МСК</td></tr>
+      <tr><th>Конец обучения</th><td>27 октября 2026, 22:59:18 МСК</td></tr>
+      <tr><th>Чистое обучение</th><td>28 минут 10 секунд (1690 с). 0.237 примера в секунду, 0.059 шага в секунду</td></tr>
+      <tr><th>Вместе с подготовкой данных в этом прогоне</th><td>28 минут 42 секунды</td></tr>
+      <tr><th>Сравнение 20 запросов</th><td>3 минуты 3 секунды. База — 88 с, адаптер — 91 с</td></tr>
+    </tbody>
+  </table>
+  <p>Образ с PyTorch собирался отдельно, около 5 минут. Веса модели, около 950 МБ, скачались один раз до полного прогона.</p>
+
+  <h2>Как примеры легли в шаблон модели</h2>
+  <p>У Qwen2.5 шаблон чата — ChatML. В system записана роль, в user — схема и вопрос, в assistant — ответ из датасета без переписывания. Лосс считался только на реплике assistant.</p>
+<pre>&lt;|im_start|&gt;system
+You translate a question about a database into one SQL query. Reply with the SQL query only, without explanation.&lt;|im_end|&gt;
+&lt;|im_start|&gt;user
+Schema:
+CREATE TABLE table_name_50 (venue VARCHAR, away_team VARCHAR)
+Question: When Essendon played away; where did they play?&lt;|im_end|&gt;
+&lt;|im_start|&gt;assistant
+SELECT venue FROM table_name_50 WHERE away_team = "essendon"&lt;|im_end|&gt;</pre>
+  <p>На сравнении SQL-вопросы шли с этим же system. Шесть обычных вопросов шли с другим, одинаковым для обеих моделей: «You are a helpful assistant. Answer directly and briefly.» Так видно, не разучилась ли модель говорить не на SQL.</p>
+  <p>Точное совпадение SQL считалось после нижнего регистра, сжатия пробелов и снятия точки с запятой. Поэтому <code>'Phoenix'</code> и <code>"phoenix"</code> — разные ответы, а разный регистр внутри уже совпавшей фразы не ломает зачёт.</p>
+
+  <h2>Двадцать запросов</h2>
+  <p>Метка на карточке — чтение ответа, не только автоматический счётчик. Автомат видел 8 улучшений и 12 «так же»: он ставит «лучше» лишь при точном SQL или когда SQL появился там, где база его не выдала. Он не замечает, что оба ответа неточные, но адаптер ушёл дальше от эталона. Таких мест три в SQL и два в обычных вопросах.</p>
+  
+<article class="card лучше">
+  <header>
+    <span class="qid">s1</span>
+    <span class="pill лучше">лучше</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_name_50 (venue VARCHAR, away_team VARCHAR)
+Question: When Essendon played away; where did they play?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>WHERE away_team = &#x27;Essendon&#x27; AND venue IS NOT NULL</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT venue FROM table_name_50 WHERE away_team = &quot;essendon&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT venue FROM table_name_50 WHERE away_team = &quot;essendon&quot;</pre></section>
+  </div>
+  <p class="note">База оборвала запрос на условии WHERE и не написала SELECT. Адаптер совпал с эталоном.</p>
+</article>
+<article class="card лучше">
+  <header>
+    <span class="qid">s2</span>
+    <span class="pill лучше">лучше</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_name_61 (game INTEGER, opponent VARCHAR, record VARCHAR)
+Question: What is the lowest numbered game against Phoenix with a record of 29-17?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT MIN(game) FROM table_name_61 WHERE opponent = &#x27;Phoenix&#x27; AND record = &#x27;29-17&#x27;</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT MIN(game) FROM table_name_61 WHERE opponent = &quot;phoenix&quot; AND record = &quot;29-17&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT MIN(game) FROM table_name_61 WHERE opponent = &quot;phoenix&quot; AND record = &quot;29-17&quot;</pre></section>
+  </div>
+  <p class="note">Форма запроса у обеих верна. Адаптер попал в двойные кавычки и нижний регистр датасета.</p>
+</article>
+<article class="card лучше">
+  <header>
+    <span class="qid">s3</span>
+    <span class="pill лучше">лучше</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_name_37 (opponent VARCHAR, week VARCHAR)
+Question: Who did the Texan&#x27;s play on Week 4?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT opponent FROM table_name_37 WHERE week = &#x27;Week 4&#x27;</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT opponent FROM table_name_37 WHERE week = &quot;4&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT opponent FROM table_name_37 WHERE week = &quot;4&quot;</pre></section>
+  </div>
+  <p class="note">База подставила текст Week 4. Адаптер записал код недели так же, как эталон: &quot;4&quot;.</p>
+</article>
+<article class="card хуже">
+  <header>
+    <span class="qid">s4</span>
+    <span class="pill хуже">хуже</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_name_70 (points INTEGER, touchdowns VARCHAR, extra_points VARCHAR)
+Question: Which Points have Touchdowns larger than 0, and an Extra points smaller than 0?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT points FROM table_name_70 WHERE touchdowns &gt; 0 AND extra_points &lt; 0</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT AVG(points) FROM table_name_70 WHERE touchdowns &gt; 0 AND extra_points &lt; 0</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT SUM(points) FROM table_name_70 WHERE touchdowns &gt; 0 AND extra_points &lt; 0</pre></section>
+  </div>
+  <p class="note">Эталон считает SUM(points). База хотя бы взяла столбец points. Адаптер подставил AVG.</p>
+</article>
+<article class="card хуже">
+  <header>
+    <span class="qid">s5</span>
+    <span class="pill хуже">хуже</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_name_83 (name VARCHAR, moving_to VARCHAR, nat VARCHAR, transfer_window VARCHAR)
+Question: What is the name of the player who is Sco and moving to greenock morton in the summer?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT name FROM table_name_83 WHERE moving_to = &#x27;greenock morton&#x27; AND nat = &#x27;sco&#x27; AND transfer_window LIKE &#x27;%summer%&#x27;</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT name FROM table_name_83 WHERE moving_to = &quot;greenock morton&quot; AND nat = &quot;sco&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT name FROM table_name_83 WHERE nat = &quot;sco&quot; AND transfer_window = &quot;summer&quot; AND moving_to = &quot;greenock morton&quot;</pre></section>
+  </div>
+  <p class="note">В эталоне три фильтра, включая летнее трансферное окно. База все три сохранила. Адаптер окно выкинул.</p>
+</article>
+<article class="card так-же">
+  <header>
+    <span class="qid">s6</span>
+    <span class="pill так-же">так же</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE votes (contestant_number VARCHAR); CREATE TABLE contestants (contestant_number VARCHAR, contestant_name VARCHAR)
+Question: Of all the contestants who got voted, what is the contestant number and name of the contestant who got least votes?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT T2.contestant_number, T2.contestant_name FROM contestants AS T1 JOIN votes AS T2 ON T1.contestant_number = T2.contestant_number GROUP BY T2.contestant_number ORDER BY COUNT(T1.contestant_number) LIMIT 1</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT T2.contestant_number, T1.contestant_name FROM contestants AS T1 JOIN votes AS T2 ON T1.contestant_number = T2.contestant_number GROUP BY T2.contestant_number ORDER BY COUNT(*) LIMIT 1</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT T1.contestant_number, T1.contestant_name FROM contestants AS T1 JOIN votes AS T2 ON T1.contestant_number = T2.contestant_number GROUP BY T1.contestant_number ORDER BY COUNT(*) LIMIT 1</pre></section>
+  </div>
+  <p class="note">Оба собрали JOIN и LIMIT 1, но ни один не совпал с эталоном. Разница в алиасах таблиц.</p>
+</article>
+<article class="card лучше">
+  <header>
+    <span class="qid">s7</span>
+    <span class="pill лучше">лучше</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_name_50 (venue VARCHAR, result VARCHAR)
+Question: Which venue had the result 7-1?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT venue FROM table_name_50 WHERE result = &#x27;7-1&#x27;</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT venue FROM table_name_50 WHERE result = &quot;7-1&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT venue FROM table_name_50 WHERE result = &quot;7-1&quot;</pre></section>
+  </div>
+  <p class="note">Смысл один и тот же. Точным ответ адаптера делает оформление литерала: &quot;7-1&quot;.</p>
+</article>
+<article class="card так-же">
+  <header>
+    <span class="qid">s8</span>
+    <span class="pill так-же">так же</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_name_22 (Id VARCHAR)
+Question: What did the tournament that got an A in 1945 get in 1949?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT T22.`id` FROM table_name_22 AS T22 INNER JOIN (
+    SELECT Id FROM table_name_22 WHERE Year = 1945 GROUP BY Id
+) AS T1 ON T22.Id = T1.Id AND T22.Year = 1949</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT COUNT(Id) FROM table_name_22 WHERE year = &quot;1949&quot; AND type = &quot;a&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT 1949 FROM table_name_22 WHERE 1945 = &quot;a&quot;</pre></section>
+  </div>
+  <p class="note">В схеме нет колонок с годами, эталон сам странный. Обе модели выдумали свой запрос и промахнулись.</p>
+</article>
+<article class="card так-же">
+  <header>
+    <span class="qid">s9</span>
+    <span class="pill так-же">так же</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE college (state VARCHAR, enr INTEGER)
+Question: Find the states where have the colleges whose enrollments are less than the largest size.</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT state FROM college WHERE enr &lt; (SELECT MAX(enrollments) FROM college)</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT state FROM college WHERE enr &lt; (SELECT MAX(enrollments) FROM college)</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT DISTINCT state FROM college WHERE enr &lt; (SELECT MAX(enr) FROM college)</pre></section>
+  </div>
+  <p class="note">Ответы совпали дословно. Обе подставили несуществующий столбец enrollments вместо enr.</p>
+</article>
+<article class="card лучше">
+  <header>
+    <span class="qid">s10</span>
+    <span class="pill лучше">лучше</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_24648983_1 (title VARCHAR, us_viewers__million_ VARCHAR)
+Question: What is the name of the episode that had 9.89 million U.S. viewers?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT title FROM table_24648983_1 WHERE us_viewers__million_ = &#x27;9.89&#x27;</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT title FROM table_24648983_1 WHERE us_viewers__million_ = &quot;9.89&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT title FROM table_24648983_1 WHERE us_viewers__million_ = &quot;9.89&quot;</pre></section>
+  </div>
+  <p class="note">Запрос тот же. Адаптер совпал с эталоном за счёт двойных кавычек.</p>
+</article>
+<article class="card хуже">
+  <header>
+    <span class="qid">s11</span>
+    <span class="pill хуже">хуже</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE Bookings (Workshop_Group_ID VARCHAR, Status_Code VARCHAR); CREATE TABLE Drama_Workshop_Groups (Store_Name VARCHAR, Workshop_Group_ID VARCHAR)
+Question: What are the names of the workshop groups that have bookings with status code &quot;stop&quot;?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT Store_Name FROM Drama_Workshop_Groups WHERE Workshop_Group_ID IN (SELECT Workshops.Workshop_Group_ID FROM Bookings WHERE Status_Code = &#x27;Stop&#x27;)</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT Store_Name FROM Drama_Workshop_Groups WHERE Workshop_Group_ID IN (SELECT Workshops FROM Bookings WHERE Status_Code = &quot;Stop&quot;)</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT T2.Store_Name FROM Bookings AS T1 JOIN Drama_Workshop_Groups AS T2 ON T1.Workshop_Group_ID = T2.Workshop_Group_ID WHERE T1.Status_Code = &quot;stop&quot;</pre></section>
+  </div>
+  <p class="note">Оба не собрали нужный JOIN. База ошиблась в алиасе, но читала настоящий столбец. Адаптер выдумал столбец Workshops.</p>
+</article>
+<article class="card лучше">
+  <header>
+    <span class="qid">s12</span>
+    <span class="pill лучше">лучше</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_name_96 (location VARCHAR, opponenent VARCHAR)
+Question: Where was the opponent Germany?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT location FROM table_name_96 WHERE opponenent = &#x27;Germany&#x27;</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT location FROM table_name_96 WHERE opponenent = &quot;germany&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT location FROM table_name_96 WHERE opponenent = &quot;germany&quot;</pre></section>
+  </div>
+  <p class="note">База написала &#x27;Germany&#x27;. Адаптер попал в &quot;germany&quot;, как в эталоне.</p>
+</article>
+<article class="card лучше">
+  <header>
+    <span class="qid">s13</span>
+    <span class="pill лучше">лучше</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_1342149_24 (candidates VARCHAR, result VARCHAR)
+Question: Name the candidates for result of lost renomination democratic loss</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT candidates FROM table_1342149_24 WHERE result = &#x27;lost renomination&#x27; AND result != &#x27;won&#x27;</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT candidates FROM table_1342149_24 WHERE result = &quot;Lost Renomination Democratic Loss&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT candidates FROM table_1342149_24 WHERE result = &quot;Lost renomination Democratic loss&quot;</pre></section>
+  </div>
+  <p class="note">База разрезала фразу результата на два условия. Адаптер оставил её целиком и совпал с эталоном.</p>
+</article>
+<article class="card лучше">
+  <header>
+    <span class="qid">s14</span>
+    <span class="pill лучше">лучше</span>
+    <span class="kind">SQL</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Schema:
+CREATE TABLE table_1341930_5 (party VARCHAR, district VARCHAR)
+Question: What is the number of party in the arkansas 1 district</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>SELECT COUNT(DISTINCT party) FROM table_1341930_5 WHERE district = &#x27;Arkansas 1&#x27;</pre></section>
+    <section><h3>После LoRA</h3><pre>SELECT COUNT(party) FROM table_1341930_5 WHERE district = &quot;Arkansas 1&quot;</pre></section>
+    <section><h3>Эталон</h3><pre>SELECT COUNT(party) FROM table_1341930_5 WHERE district = &quot;Arkansas 1&quot;</pre></section>
+  </div>
+  <p class="note">База добавила DISTINCT, которого в эталоне нет. Адаптер повторил COUNT(party).</p>
+</article>
+<article class="card так-же">
+  <header>
+    <span class="qid">g1</span>
+    <span class="pill так-же">так же</span>
+    <span class="kind">обычный вопрос</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>What is the capital of France?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>The capital of France is Paris.</pre></section>
+    <section><h3>После LoRA</h3><pre>The capital of France is Paris.</pre></section>
+    <section><h3>Эталон</h3><pre>—</pre></section>
+  </div>
+  <p class="note">Ответ не изменился.</p>
+</article>
+<article class="card хуже">
+  <header>
+    <span class="qid">g2</span>
+    <span class="pill хуже">хуже</span>
+    <span class="kind">обычный вопрос</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Explain photosynthesis in two short sentences.</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>Photosynthesis is the process by which plants, algae, and some bacteria convert light energy into chemical energy stored in glucose molecules, using carbon dioxide and water as reactants.</pre></section>
+    <section><h3>После LoRA</h3><pre>Photosynthesis is the process by which plants, algae, and some bacteria convert light energy into chemical energy stored in glucose molecules.</pre></section>
+    <section><h3>Эталон</h3><pre>—</pre></section>
+  </div>
+  <p class="note">Просили два коротких предложения. Обе модели дали одно. Адаптер короче и потерял углекислый газ и воду.</p>
+</article>
+<article class="card так-же">
+  <header>
+    <span class="qid">g3</span>
+    <span class="pill так-же">так же</span>
+    <span class="kind">обычный вопрос</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Write a one-sentence greeting to a colleague.</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>Good day, [Colleague&#x27;s Name], and welcome back!</pre></section>
+    <section><h3>После LoRA</h3><pre>Good day, [Colleague&#x27;s Name], and welcome back!</pre></section>
+    <section><h3>Эталон</h3><pre>—</pre></section>
+  </div>
+  <p class="note">Ответ не изменился.</p>
+</article>
+<article class="card так-же">
+  <header>
+    <span class="qid">g4</span>
+    <span class="pill так-же">так же</span>
+    <span class="kind">обычный вопрос</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>How much is 17 multiplied by 3?</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>17 multiplied by 3 equals 51.</pre></section>
+    <section><h3>После LoRA</h3><pre>17 multiplied by 3 equals 51.</pre></section>
+    <section><h3>Эталон</h3><pre>—</pre></section>
+  </div>
+  <p class="note">Оба посчитали 51.</p>
+</article>
+<article class="card так-же">
+  <header>
+    <span class="qid">g5</span>
+    <span class="pill так-же">так же</span>
+    <span class="kind">обычный вопрос</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Name three prime numbers.</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>Three prime numbers are 2, 3, and 5.</pre></section>
+    <section><h3>После LoRA</h3><pre>Three prime numbers are 2, 3, and 5.</pre></section>
+    <section><h3>Эталон</h3><pre>—</pre></section>
+  </div>
+  <p class="note">Оба назвали 2, 3 и 5.</p>
+</article>
+<article class="card хуже">
+  <header>
+    <span class="qid">g6</span>
+    <span class="pill хуже">хуже</span>
+    <span class="kind">обычный вопрос</span>
+  </header>
+  <h3>Запрос</h3>
+  <pre>Напиши одно предложение про осенний дождь.</pre>
+  <div class="grid">
+    <section><h3>База</h3><pre>Осенью дожди стали сильнее, чем обычно.</pre></section>
+    <section><h3>После LoRA</h3><pre>Осенью, когда дожди начинают сменяться на морозы, яркие цветки ветвей и зелёные листья становятся ярче и краснее.</pre></section>
+    <section><h3>Эталон</h3><pre>—</pre></section>
+  </div>
+  <p class="note">База написала одно простое предложение про дождь. Адаптер смешал дождь, мороз, цветы и листья.</p>
+</article>
+
+  <h2>Что изменилось</h2>
+  <p>Адаптер перенял формат датасета. На простых запросах он пишет один SQL, с двойными кавычками и нижним регистром литералов, и чаще попадает в эталон. Точные попадания: s1, s2, s3, s7, s10, s12, s13, s14. У базы точных не было. Самый заметный сдвиг — s1: база выдала обрывок условия, адаптер собрал готовый <code>SELECT</code>.</p>
+
+  <h2>Что осталось прежним</h2>
+  <p>Обычные факты не превратились в SQL. Дословно те же ответы на столицу Франции, приветствие коллеге, 17×3 и три простых числа. На сложных схемах обе модели по-прежнему промахиваются: s6 и s8 обе мимо, s9 ошибается одинаково и подставляет столбец <code>enrollments</code>.</p>
+
+  <h2>Где стало хуже</h2>
+  <ul>
+    <li><b>s4.</b> Эталон — <code>SUM(points)</code>. База взяла столбец <code>points</code>. Адаптер подставил <code>AVG(points)</code>.</li>
+    <li><b>s5.</b> База сохранила фильтр летнего трансферного окна. Адаптер его выкинул и оставил только гражданство и клуб.</li>
+    <li><b>s11.</b> База перепутала алиас, но читала существующий столбец. Адаптер выдумал столбец <code>Workshops</code>.</li>
+    <li><b>g2.</b> Просили два предложения про фотосинтез. Адаптер оставил одно и убрал реагенты, которые база назвала.</li>
+    <li><b>g6.</b> База написала одно ясное предложение про осенний дождь. Адаптер смешал дождь с морозом, цветами и листьями.</li>
+  </ul>
+
+  <h2>Где лежат файлы</h2>
+  <p>На s1, каталог <code>/home/troot/lora-lab-src/output/</code>:</p>
+  <ul>
+    <li><code>adapter/adapter_model.safetensors</code> — сам адаптер, 4.2 МБ, вместе с токенизатором;</li>
+    <li><code>run_meta.json</code> — параметры и время;</li>
+    <li><code>loss.jsonl</code> — лосс по шагам;</li>
+    <li><code>compare.json</code> — 20 ответов базы и адаптера;</li>
+    <li><code>test_sql.json</code> — контрольные вопросы, которые не участвовали в обучении.</li>
+  </ul>
+  <p>Скрипты обучения и сравнения: <code>/home/troot/lora-lab-src/train.py</code> и <code>compare.py</code>.</p>
+</main>
+</body>
+</html>
